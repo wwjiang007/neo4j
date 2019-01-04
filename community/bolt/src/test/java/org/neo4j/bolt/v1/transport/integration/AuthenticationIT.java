@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -28,11 +28,18 @@ import org.junit.Test;
 import org.junit.rules.RuleChain;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 import org.neo4j.bolt.AbstractBoltTransportsTest;
+import org.neo4j.bolt.BoltKernelExtension;
 import org.neo4j.bolt.v1.messaging.message.AckFailureMessage;
 import org.neo4j.bolt.v1.messaging.message.FailureMessage;
 import org.neo4j.bolt.v1.messaging.message.InitMessage;
@@ -40,20 +47,24 @@ import org.neo4j.bolt.v1.messaging.message.PullAllMessage;
 import org.neo4j.bolt.v1.messaging.message.ResetMessage;
 import org.neo4j.bolt.v1.messaging.message.ResponseMessage;
 import org.neo4j.bolt.v1.messaging.message.RunMessage;
+import org.neo4j.bolt.v1.transport.socket.client.TransportConnection;
 import org.neo4j.graphdb.factory.GraphDatabaseSettings;
 import org.neo4j.helpers.HostnamePort;
 import org.neo4j.kernel.api.exceptions.Status;
 import org.neo4j.kernel.impl.util.ValueUtils;
 import org.neo4j.kernel.internal.Version;
+import org.neo4j.logging.AssertableLogProvider;
 import org.neo4j.test.TestGraphDatabaseFactory;
 import org.neo4j.test.rule.fs.EphemeralFileSystemRule;
 import org.neo4j.values.virtual.MapValue;
 import org.neo4j.values.virtual.VirtualValues;
 
 import static java.util.Collections.singletonList;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.instanceOf;
+import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.fail;
 import static org.neo4j.bolt.v1.messaging.util.MessageMatchers.msgFailure;
@@ -61,10 +72,13 @@ import static org.neo4j.bolt.v1.messaging.util.MessageMatchers.msgIgnored;
 import static org.neo4j.bolt.v1.messaging.util.MessageMatchers.msgSuccess;
 import static org.neo4j.bolt.v1.transport.integration.TransportTestUtil.eventuallyDisconnects;
 import static org.neo4j.helpers.collection.MapUtil.map;
+import static org.neo4j.logging.AssertableLogProvider.inLog;
+import static org.neo4j.test.assertion.Assert.assertEventually;
 
 public class AuthenticationIT extends AbstractBoltTransportsTest
 {
     protected EphemeralFileSystemRule fsRule = new EphemeralFileSystemRule();
+    protected final AssertableLogProvider logProvider = new AssertableLogProvider();
     protected Neo4jWithSocket server =
             new Neo4jWithSocket( getClass(), getTestGraphDatabaseFactory(), fsRule, getSettingsFunction() );
 
@@ -73,7 +87,7 @@ public class AuthenticationIT extends AbstractBoltTransportsTest
 
     protected TestGraphDatabaseFactory getTestGraphDatabaseFactory()
     {
-        return new TestGraphDatabaseFactory();
+        return new TestGraphDatabaseFactory( logProvider );
     }
 
     protected Consumer<Map<String,String>> getSettingsFunction()
@@ -129,6 +143,16 @@ public class AuthenticationIT extends AbstractBoltTransportsTest
                 "The client is unauthorized due to authentication failure." ) ) );
 
         assertThat( connection, eventuallyDisconnects() );
+
+        assertEventually( ignore -> "Matching log call not found in\n" + logProvider.serialize(),
+                this::authFailureLoggedToUserLog, is( true ), 30, SECONDS );
+    }
+
+    private boolean authFailureLoggedToUserLog()
+    {
+        String boltPackageName = BoltKernelExtension.class.getPackage().getName();
+        return logProvider.containsMatchingLogCall( inLog( containsString( boltPackageName ) )
+                .warn( containsString( "The client is unauthorized due to authentication failure." ) ) );
     }
 
     @Test
@@ -252,49 +276,57 @@ public class AuthenticationIT extends AbstractBoltTransportsTest
     public void shouldFailDifferentlyIfTooManyFailedAuthAttempts() throws Exception
     {
         // Given
-        final long timeout = System.currentTimeMillis() + 30_000;
-        final FailureMsgMatcher failureMatcher = new FailureMsgMatcher();
+        final long timeout = System.currentTimeMillis() + 60_000;
+        FailureMessage failureMessage = null;
 
         // When
-        while ( !failureMatcher.gotSpecialMessage() )
+        while ( failureMessage == null )
         {
-            // Let's just fire up 3 connections (which is the default value for `unsupported.dbms.security.auth_max_failed_attempts`
-            // with wrong credentials but don't put any assertions on them. we're doing this because RateLimitedAuthenticationStrategy
-            // has a 5_000 ms expiry policy which is not configurable.
-            for ( int i = 0; i < 3; i++ )
-            {
-                newConnection().connect( address )
-                        .send( util.defaultAcceptedVersions() )
-                        .send( util.chunk(
-                                InitMessage.init( "TestClient/1.1",
-                                        map( "principal", "neo4j", "credentials", "WHAT_WAS_THE_PASSWORD_AGAIN",
-                                                "scheme", "basic" ) ) ) )
-                        .disconnect();
-            }
-
-            // We're expecting this call to fail with a FAILURE message if the above block completed in 5_000 ms
-            connection.connect( address )
-                    .send( util.defaultAcceptedVersions() )
-                    .send( util.chunk(
-                            InitMessage.init( "TestClient/1.1",
-                                    map( "principal", "neo4j", "credentials", "WHAT_WAS_THE_PASSWORD_AGAIN",
-                                            "scheme", "basic" ) ) ) );
-
-            assertThat( connection, util.eventuallyReceivesSelectedProtocolVersion() );
-            assertThat( connection, util.eventuallyReceives( failureMatcher ) );
-
-            assertThat( connection, eventuallyDisconnects() );
-            reconnect();
-
             if ( System.currentTimeMillis() > timeout )
             {
                 fail( "Timed out waiting for the authentication failure to occur." );
             }
+
+            ExecutorService executor = Executors.newFixedThreadPool( 10 );
+
+            // Fire up some parallel connections that all send wrong authentication tokens
+            List<CompletableFuture<FailureMessage>> futures = new ArrayList<>();
+            for ( int i = 0; i < 10; i++ )
+            {
+                futures.add( CompletableFuture.supplyAsync( this::collectAuthFailureOnFailedAuth, executor ) );
+            }
+
+            try
+            {
+                // Wait for all tasks to complete
+                CompletableFuture.allOf( futures.toArray( new CompletableFuture[0] ) ).get( 30, SECONDS );
+
+                // We want at least one of the futures to fail with our expected code
+                for ( int i = 0; i < futures.size(); i++ )
+                {
+                    FailureMessage recordedMessage = futures.get( i ).get();
+
+                    if ( recordedMessage != null )
+                    {
+                        failureMessage = recordedMessage;
+
+                        break;
+                    }
+                }
+            }
+            catch ( TimeoutException ex )
+            {
+                // if jobs did not complete, let's try again
+                // do nothing
+            }
+            finally
+            {
+                executor.shutdown();
+            }
         }
 
-        // Then
-        assertThat( failureMatcher.specialMessage.status(), equalTo( Status.Security.AuthenticationRateLimit ) );
-        assertThat( failureMatcher.specialMessage.message(),
+        assertThat( failureMessage.status(), equalTo( Status.Security.AuthenticationRateLimit ) );
+        assertThat( failureMessage.message(),
                 containsString( "The client has provided incorrect authentication details too many times in a row." ) );
     }
 
@@ -552,5 +584,44 @@ public class AuthenticationIT extends AbstractBoltTransportsTest
     private MapValue singletonMap( String key, Object value )
     {
         return VirtualValues.map( Collections.singletonMap( key, ValueUtils.of( value ) ) );
+    }
+
+    private FailureMessage collectAuthFailureOnFailedAuth()
+    {
+        FailureMsgMatcher failureRecorder = new FailureMsgMatcher();
+
+        TransportConnection connection = null;
+        try
+        {
+            connection = newConnection();
+
+            connection.connect( address ).send( util.defaultAcceptedVersions() ).send( util.chunk(
+                    InitMessage.init( "TestClient/1.1",
+                            map( "principal", "neo4j", "credentials", "WHAT_WAS_THE_PASSWORD_AGAIN", "scheme", "basic" ) ) ) );
+
+            assertThat( connection, util.eventuallyReceivesSelectedProtocolVersion() );
+            assertThat( connection, util.eventuallyReceives( failureRecorder ) );
+            assertThat( connection, eventuallyDisconnects() );
+        }
+        catch ( Exception ex )
+        {
+            throw new RuntimeException( ex );
+        }
+        finally
+        {
+            if ( connection != null )
+            {
+                try
+                {
+                    connection.disconnect();
+                }
+                catch ( IOException ex )
+                {
+                    throw new RuntimeException( ex );
+                }
+            }
+        }
+
+        return failureRecorder.specialMessage;
     }
 }

@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -38,7 +41,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
     createNode()
     createNode()
     createNode()
-    val result = profileWithExecute(Configs.All + Configs.Morsel, "MATCH (n) RETURN n")
+    val result = profileWithExecute(Configs.All, "MATCH (n) RETURN n")
 
     assertRows(3)(result)("AllNodesScan", "ProduceResults")
     assertDbHits(0)(result)("ProduceResults")
@@ -50,7 +53,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
     createNode()
     createNode()
 
-    val result = profileWithExecute(Configs.All + Configs.Morsel, "MATCH (n) RETURN (n:Foo)")
+    val result = profileWithExecute(Configs.All, "MATCH (n) RETURN (n:Foo)")
 
     assertRows(3)(result)("AllNodesScan", "ProduceResults")
     assertDbHits(0)(result)("ProduceResults")
@@ -102,7 +105,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
         relate( createNode(), createNode(), "FOO")
 
         //WHEN
-        val result = profileWithExecute(Configs.Interpreted + Configs.Morsel, "match (n) where (n)-[:FOO]->() return *")
+        val result = profileWithExecute(Configs.Interpreted, "match (n) where (n)-[:FOO]->() return *")
 
         //THEN
         assertRows(1)(result)("Filter")
@@ -145,7 +148,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
         relate( createNode(), createNode(), "FOO")
 
         //WHEN
-        val result = profileWithExecute(Configs.Interpreted + Configs.Morsel, "match (n) where not (n)-[:FOO]->() return *")
+        val result = profileWithExecute(Configs.Interpreted, "match (n) where not (n)-[:FOO]->() return *")
 
         //THEN
         assertRows(1)(result)("Filter")
@@ -225,7 +228,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
         createNode()
 
         //GIVEN
-        val result = profileWithExecute(Configs.All + Configs.Morsel, "MATCH (n) RETURN n.foo")
+        val result = profileWithExecute(Configs.All, "MATCH (n) RETURN n.foo")
 
         //WHEN THEN
         assertRows(1)(result)("ProduceResults")
@@ -316,8 +319,15 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
 
       test("LIMIT should influence cardinality estimation by default value when expression contains timestamp()") {
         (0 until 100).map(i => createLabeledNode("Person"))
-        val result = executeWith(Configs.Interpreted, s"PROFILE MATCH (p:Person) with 10 as x, p RETURN p LIMIT timestamp()")
-        assertEstimatedRows(GraphStatistics.DEFAULT_LIMIT_CARDINALITY.amount.toInt)(result)("Limit")
+        //TODO this cannot be run with executeWith since it will occasionally succeed on 2.3 and we have decided not
+        //to fix this on 2.3. So if we fix the issue on 2.3 or if we no longer need to depend on 2.3 we should update test
+        //to run with `executeWith`
+        assertEstimatedRows(GraphStatistics.DEFAULT_LIMIT_CARDINALITY.amount.toInt)(
+          innerExecuteDeprecated(s"PROFILE MATCH (p:Person) with 10 as x, p RETURN p LIMIT timestamp()", Map.empty))("Limit")
+        assertEstimatedRows(GraphStatistics.DEFAULT_LIMIT_CARDINALITY.amount.toInt)(
+          innerExecuteDeprecated(s"PROFILE CYPHER runtime=slotted MATCH (p:Person) with 10 as x, p RETURN p LIMIT timestamp()", Map.empty))("Limit")
+        assertEstimatedRows(GraphStatistics.DEFAULT_LIMIT_CARDINALITY.amount.toInt)(
+          innerExecuteDeprecated(s"PROFILE CYPHER runtime=interpreted MATCH (p:Person) with 10 as x, p RETURN p LIMIT timestamp()", Map.empty))("Limit")
       }
 
       test ("should support profiling union queries") {
@@ -368,7 +378,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
       }
 
       test("should not have a problem profiling empty results") {
-        val result = profileWithExecute(Configs.Interpreted + Configs.Morsel, "MATCH (n) WHERE (n)-->() RETURN n")
+        val result = profileWithExecute(Configs.Interpreted, "MATCH (n) WHERE (n)-->() RETURN n")
 
         result shouldBe empty
         result.executionPlanDescription().toString should include("AllNodes")
@@ -423,13 +433,13 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
        }
 
       test("should show expand without types in a simple form") {
-        val a = profileWithExecute(Configs.All + Configs.Morsel, "match (n)-->() return *")
+        val a = profileWithExecute(Configs.All, "match (n)-->() return *")
 
         a.executionPlanDescription().toString should include("()<--(n)")
       }
 
       test("should show expand with types in a simple form") {
-        val result = profileWithExecute(Configs.All + Configs.Morsel, "match (n)-[r:T]->() return *")
+        val result = profileWithExecute(Configs.All, "match (n)-[r:T]->() return *")
 
         result.executionPlanDescription().toString should include("()<-[r:T]-(n)")
       }
@@ -451,7 +461,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
         relate(createNode(), createNode())
 
         // when
-        val result = profileWithExecute(Configs.All + Configs.Morsel, "match (n)-->(x) return x")
+        val result = profileWithExecute(Configs.All, "match (n)-->(x) return x")
 
         // then
         assertDbHits(3)(result)("Expand(All)")
@@ -460,7 +470,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
 
       test("should report correct dbhits and rows for literal addition") {
         // when
-        val result = profileWithExecute(Configs.All + Configs.Morsel, "return 5 + 3")
+        val result = profileWithExecute(Configs.All, "return 5 + 3")
 
         // then
         assertDbHits(0)(result)("Projection", "ProduceResults")
@@ -472,7 +482,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
         createNode("name" -> "foo")
 
         // when
-        val result = profileWithExecute(Configs.All + Configs.Morsel, "match (n) return n.name + 3")
+        val result = profileWithExecute(Configs.All, "match (n) return n.name + 3")
 
         // then
         assertDbHits(1)(result)("Projection")
@@ -484,7 +494,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
         createNode("name" -> 10)
 
         // when
-        val result = profileWithExecute(Configs.All + Configs.Morsel, "match (n) return n.name - 3")
+        val result = profileWithExecute(Configs.All, "match (n) return n.name - 3")
 
         // then
         assertDbHits(1)(result)("Projection")
@@ -590,25 +600,17 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
       test("joins with identical scans") {
         //given
         val corp = createLabeledNode("Company")
-        val a1 = createLabeledNode("Artist")
-        val a2 = createLabeledNode("Artist")
-        val c = createLabeledNode("Concert")
-        val v = createLabeledNode("Venue")
-        relate(corp, a1, "SIGNED_WITH")
-        relate(corp, a2, "SIGNED_WITH")
-        relate(a1, c, "PERFORMED_AT")
-        relate(a2, c, "PERFORMED_AT")
-        relate(c, v, "IN")
 
         //force a plan to have a scan on corp in both the lhs and the rhs of join
         val query =
-          """PROFILE MATCH (corp:Company)<-[:SIGNED_WITH]-(a1:Artist)-[:PERFORMED_AT]->(c:Concert)-[:IN]->(v:Venue)
-            |MATCH (corp)<-[:SIGNED_WITH]-(a2:Artist)-[:PERFORMED_AT]->(c)
-            |USING JOIN ON c,corp
-            |RETURN a1, a2, v""".stripMargin
+          """PROFILE MATCH (a:Company) RETURN a
+            |UNION
+            |MATCH (a:Company) RETURN a""".stripMargin
 
         //when
         val result = innerExecuteDeprecated(query, Map.empty)
+
+        result.toSet should be(Set(Map("a" -> corp), Map("a" -> corp)))
 
         //then
         assertDbHits(2)(result)("NodeByLabelScan")
@@ -656,6 +658,26 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
         // THEN
         assertDbHits(14)(result)("Filter")
       }
+
+  test("profile pruning var length expand"){
+    //some graph
+    val a = createLabeledNode("Start")
+    val b1 = createLabeledNode("Node")
+    val b2 = createLabeledNode("Node")
+    val b3 = createLabeledNode("Node")
+    val b4 = createLabeledNode("Node")
+    relate(a, b1, "T1")
+    relate(b1, b2, "T1")
+    relate(b2, b3, "T1")
+    relate(b2, b4, "T1")
+
+    val query = "profile match (b:Start)-[*3]->(d) return count(distinct d)"
+    val result = executeWith(Configs.Interpreted, query)
+
+    assertRows(2)(result)("VarLengthExpand(Pruning)")
+    assertDbHits(7)(result)("VarLengthExpand(Pruning)")
+
+  }
 
   private def assertRows(expectedRows: Int)(result: InternalExecutionResult)(names: String*) {
     getPlanDescriptions(result, names).foreach {

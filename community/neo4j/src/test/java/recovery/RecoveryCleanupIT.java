@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -19,6 +19,7 @@
  */
 package recovery;
 
+import org.hamcrest.Matcher;
 import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Before;
@@ -27,7 +28,10 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -57,9 +61,11 @@ import org.neo4j.test.Barrier;
 import org.neo4j.test.Race;
 import org.neo4j.test.TestGraphDatabaseFactory;
 import org.neo4j.test.rule.TestDirectory;
+import org.neo4j.values.storable.Values;
 
 import static org.junit.Assert.fail;
 import static org.neo4j.graphdb.factory.GraphDatabaseSettings.SchemaIndex.NATIVE20;
+import static org.neo4j.values.storable.CoordinateReferenceSystem.Cartesian;
 
 public class RecoveryCleanupIT
 {
@@ -135,7 +141,14 @@ public class RecoveryCleanupIT
         startDatabase().shutdown();
 
         // then
-        logProvider.assertContainsLogCallContaining( "Scan store recovery completed" );
+        logProvider.assertContainsLogCallContaining( "Label index cleanup job registered" );
+        logProvider.assertContainsLogCallContaining( "Label index cleanup job started" );
+        logProvider.assertContainsMessageMatching( Matchers.stringContainsInOrder( Iterables.asIterable(
+                "Label index cleanup job finished",
+                "Number of pages visited",
+                "Number of cleaned crashed pointers",
+                "Time spent" ) ) );
+        logProvider.assertContainsLogCallContaining( "Label index cleanup job closed" );
     }
 
     @Test
@@ -147,16 +160,44 @@ public class RecoveryCleanupIT
 
         // when
         AssertableLogProvider logProvider = new AssertableLogProvider( true );
-        factory.setUserLogProvider( logProvider );
         factory.setInternalLogProvider( logProvider );
         startDatabase().shutdown();
 
         // then
-        logProvider.assertContainsMessageMatching( Matchers.stringContainsInOrder( Iterables.asIterable(
-                "Schema index recovery completed",
-                "cleaned crashed pointers",
-                "pages visited",
-                "Time spent" ) ) );
+        List<Matcher<String>> matchers = new ArrayList<>();
+        String[] subTypes = new String[]{"string", "native", "spatial", "temporal"};
+        for ( String subType : subTypes )
+        {
+            matchers.add( indexRecoveryLogMatcher( "Schema index cleanup job registered", subType ) );
+            matchers.add( indexRecoveryLogMatcher( "Schema index cleanup job started", subType ) );
+            matchers.add( indexRecoveryFinishedLogMatcher( subType ) );
+            matchers.add( indexRecoveryLogMatcher( "Schema index cleanup job closed", subType ) );
+        }
+        matchers.forEach( logProvider::assertContainsExactlyOneMessageMatching );
+    }
+
+    private Matcher<String> indexRecoveryLogMatcher( String logMessage, String subIndexProviderKey )
+    {
+
+        return Matchers.stringContainsInOrder( Iterables.asIterable(
+                logMessage,
+                "descriptor",
+                "indexFile=",
+                File.separator + subIndexProviderKey ) );
+    }
+
+    private Matcher<String> indexRecoveryFinishedLogMatcher( String subIndexProviderKey )
+    {
+
+        return Matchers.stringContainsInOrder( Iterables.asIterable(
+                "Schema index cleanup job finished",
+                "descriptor",
+                "indexFile=",
+                File.separator + subIndexProviderKey,
+                "Number of pages visited",
+                "Number of cleaned crashed pointers",
+                "Time spent" )
+        );
     }
 
     private void dirtyDatabase() throws IOException
@@ -223,6 +264,8 @@ public class RecoveryCleanupIT
         {
             db.createNode( label ).setProperty( propKey, 1 );
             db.createNode( label ).setProperty( propKey, "string" );
+            db.createNode( label ).setProperty( propKey, Values.pointValue( Cartesian, 0.5, 0.5 ) );
+            db.createNode( label ).setProperty( propKey, LocalTime.of( 0, 0 ) );
             tx.success();
         }
     }
@@ -274,7 +317,7 @@ public class RecoveryCleanupIT
         }
 
         @Override
-        public void recoveryCompleted( Map<String,Object> data )
+        public void recoveryCleanupFinished( long numberOfPagesVisited, long numberOfCleanedCrashPointers, long durationMillis )
         {
             barrier.reached();
         }

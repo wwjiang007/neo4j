@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.cypher.internal.compatibility.v3_4.runtime
 
@@ -25,8 +28,8 @@ import org.neo4j.cypher.internal.frontend.v3_4.ast.ProcedureResultItem
 import org.neo4j.cypher.internal.frontend.v3_4.semantics.SemanticTable
 import org.neo4j.cypher.internal.ir.v3_4.{HasHeaders, NoHeaders, ShortestPathPattern}
 import org.neo4j.cypher.internal.util.v3_4.attribution.Id
-import org.neo4j.cypher.internal.util.v3_4.{Foldable, InternalException, UnNamedNameGenerator}
 import org.neo4j.cypher.internal.util.v3_4.symbols._
+import org.neo4j.cypher.internal.util.v3_4.{Foldable, InternalException, UnNamedNameGenerator}
 import org.neo4j.cypher.internal.v3_4.expressions._
 import org.neo4j.cypher.internal.v3_4.logical.plans._
 import org.neo4j.cypher.internal.v3_4.{expressions => parserAst}
@@ -55,7 +58,7 @@ object SlotAllocation {
                           argumentSizes: ArgumentSizes)
 
   /**
-    * Allocate slot for every operator in the logical plan tree {@code lp}.
+    * Allocate slot for every operator in the logical plan tree `lp`.
     *
     * @param lp the logical plan to process.
     * @return the slot configurations of every operator.
@@ -171,6 +174,15 @@ object SlotAllocation {
     val TRAVERSE_INTO_CHILDREN = Some((s: Accumulator) => s)
     val DO_NOT_TRAVERSE_INTO_CHILDREN = None
 
+    p.treeFind[Expression] {
+      case _: PatternExpression =>
+        true
+      case _: PatternComprehension =>
+        true
+    }.foreach { _ =>
+      throw new SlotAllocationFailed(s"Don't know how to handle $p")
+    }
+
     val result = p.treeFold[Accumulator](Accumulator(slots, doNotTraverseExpression = None)) {
       //-----------------------------------------------------
       // Logical plans
@@ -242,7 +254,7 @@ object SlotAllocation {
   }
 
   /**
-    * Compute the slot configuration of a leaf logical plan operator {@code lp}.
+    * Compute the slot configuration of a leaf logical plan operator `lp`.
     *
     * @param lp the operator to compute slots for.
     * @param nullable true if new slots are nullable
@@ -287,7 +299,7 @@ object SlotAllocation {
     }
 
   /**
-    * Compute the slot configuration of a single source logical plan operator {@code lp}.
+    * Compute the slot configuration of a single source logical plan operator `lp`.
     *
     * @param lp the operator to compute slots for.
     * @param nullable true if new slots are nullable
@@ -467,11 +479,11 @@ object SlotAllocation {
           source.newLong(end, nullable, CTNode)
         source
 
-      case LoadCSV(_, _, variableName, NoHeaders, _, _) =>
+      case LoadCSV(_, _, variableName, NoHeaders, _, _, _) =>
         source.newReference(variableName, nullable, CTList(CTAny))
         source
 
-      case LoadCSV(_, _, variableName, HasHeaders, _, _) =>
+      case LoadCSV(_, _, variableName, HasHeaders, _, _, _) =>
         source.newReference(variableName, nullable, CTMap)
         source
 
@@ -499,7 +511,7 @@ object SlotAllocation {
     }
 
   /**
-    * Compute the slot configuration of a branching logical plan operator {@code lp}.
+    * Compute the slot configuration of a branching logical plan operator `lp`.
     *
     * @param lp the operator to compute slots for.
     * @param nullable true if new slots are nullable
@@ -652,9 +664,9 @@ object SlotAllocation {
       case ForeachApply(_, _, variableName, listExpression) =>
         // The slot for the iteration variable of foreach needs to be available as an argument on the rhs of the apply
         // so we allocate it on the lhs (even though its value will not be needed after the foreach is done)
-        val typeSpec = semanticTable.getActualTypeFor(listExpression)
-        val listOfNodes = typeSpec.contains(ListType(CTNode))
-        val listOfRels = typeSpec.contains(ListType(CTRelationship))
+        val maybeTypeSpec = semanticTable.getActualTypeFor(listExpression)
+        val listOfNodes = maybeTypeSpec.exists(_.contains(ListType(CTNode)))
+        val listOfRels = maybeTypeSpec.exists(_.contains(ListType(CTRelationship)))
 
         (listOfNodes, listOfRels) match {
           case (true, false) => lhs.newLong(variableName, true, CTNode)

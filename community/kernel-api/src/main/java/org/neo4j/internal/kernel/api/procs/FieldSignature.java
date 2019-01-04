@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -61,6 +61,12 @@ public class FieldSignature
             {
                 return mapper.map( input ).map( valueMapper );
             }
+
+            @Override
+            public boolean needsMapping()
+            {
+                return true;
+            }
         };
     }
 
@@ -78,6 +84,12 @@ public class FieldSignature
             public Object map( AnyValue input, ValueMapper<Object> valueMapper )
             {
                 return mapper.map( input ).map( valueMapper );
+            }
+
+            @Override
+            public boolean needsMapping()
+            {
+                return true;
             }
         };
     }
@@ -112,6 +124,11 @@ public class FieldSignature
                         type.toString(), defaultValue.neo4jType().toString() ) );
             }
         }
+    }
+
+    public boolean needsMapping()
+    {
+        return false;
     }
 
     /** Fields that are not supported full stack (ie. by Cypher) need to be mapped from Cypher to internal types */

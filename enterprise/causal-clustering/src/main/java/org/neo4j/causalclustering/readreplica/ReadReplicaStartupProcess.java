@@ -1,27 +1,30 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.readreplica;
 
 import java.io.IOException;
 
-import org.neo4j.causalclustering.catchup.CatchupAddressProvider;
+import org.neo4j.causalclustering.catchup.CatchupAddressProvider.SingleAddressProvider;
 import org.neo4j.causalclustering.catchup.storecopy.DatabaseShutdownException;
 import org.neo4j.causalclustering.catchup.storecopy.LocalDatabase;
 import org.neo4j.causalclustering.catchup.storecopy.RemoteStore;
@@ -51,20 +54,20 @@ class ReadReplicaStartupProcess implements Lifecycle
     private final Log userLog;
 
     private final TimeoutStrategy timeoutStrategy;
-    private final UpstreamDatabaseStrategySelector selectionStrategyPipeline;
+    private final UpstreamDatabaseStrategySelector selectionStrategy;
     private final TopologyService topologyService;
 
     private String lastIssue;
     private final StoreCopyProcess storeCopyProcess;
 
     ReadReplicaStartupProcess( RemoteStore remoteStore, LocalDatabase localDatabase, Lifecycle txPulling,
-            UpstreamDatabaseStrategySelector selectionStrategyPipeline, TimeoutStrategy timeoutStrategy, LogProvider debugLogProvider,
+            UpstreamDatabaseStrategySelector selectionStrategy, TimeoutStrategy timeoutStrategy, LogProvider debugLogProvider,
             LogProvider userLogProvider, StoreCopyProcess storeCopyProcess, TopologyService topologyService )
     {
         this.remoteStore = remoteStore;
         this.localDatabase = localDatabase;
         this.txPulling = txPulling;
-        this.selectionStrategyPipeline = selectionStrategyPipeline;
+        this.selectionStrategy = selectionStrategy;
         this.timeoutStrategy = timeoutStrategy;
         this.debugLog = debugLogProvider.getLog( getClass() );
         this.userLog = userLogProvider.getLog( getClass() );
@@ -96,7 +99,7 @@ class ReadReplicaStartupProcess implements Lifecycle
             MemberId source = null;
             try
             {
-                source = selectionStrategyPipeline.bestUpstreamDatabase();
+                source = selectionStrategy.bestUpstreamDatabase();
                 syncStoreWithUpstream( source );
                 syncedWithUpstream = true;
             }
@@ -160,15 +163,12 @@ class ReadReplicaStartupProcess implements Lifecycle
             debugLog.info( "Local database is empty, attempting to replace with copy from upstream server %s", source );
 
             debugLog.info( "Finding store id of upstream server %s", source );
-            AdvertisedSocketAddress fromAddress =
-                    topologyService.findCatchupAddress( source ).orElseThrow( () -> new TopologyLookupException( source ) );
+            AdvertisedSocketAddress fromAddress = topologyService.findCatchupAddress( source ).orElseThrow( () -> new TopologyLookupException( source ) );
             StoreId storeId = remoteStore.getStoreId( fromAddress );
 
             debugLog.info( "Copying store from upstream server %s", source );
             localDatabase.delete();
-            CatchupAddressProvider.UpstreamStrategyBoundAddressProvider addressProvider =
-                    new CatchupAddressProvider.UpstreamStrategyBoundAddressProvider( topologyService, selectionStrategyPipeline );
-            storeCopyProcess.replaceWithStoreFrom( addressProvider, storeId );
+            storeCopyProcess.replaceWithStoreFrom( new SingleAddressProvider( fromAddress ), storeId );
 
             debugLog.info( "Restarting local database after copy.", source );
         }

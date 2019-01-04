@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -23,6 +23,7 @@ import java.io.File;
 import java.util.function.Predicate;
 
 import org.neo4j.graphdb.DependencyResolver;
+import org.neo4j.graphdb.factory.GraphDatabaseSettings;
 import org.neo4j.helpers.Service;
 import org.neo4j.internal.kernel.api.exceptions.KernelException;
 import org.neo4j.io.fs.FileSystemAbstraction;
@@ -43,6 +44,7 @@ import org.neo4j.kernel.impl.factory.GraphDatabaseFacadeFactory.Configuration;
 import org.neo4j.kernel.impl.locking.Locks;
 import org.neo4j.kernel.impl.locking.StatementLocksFactory;
 import org.neo4j.kernel.impl.logging.LogService;
+import org.neo4j.kernel.impl.proc.ProcedureConfig;
 import org.neo4j.kernel.impl.proc.Procedures;
 import org.neo4j.kernel.impl.storageengine.impl.recordstorage.id.BufferedIdController;
 import org.neo4j.kernel.impl.storageengine.impl.recordstorage.id.DefaultIdController;
@@ -78,13 +80,13 @@ public abstract class EditionModule
     private static final boolean safeIdBuffering = FeatureToggles.flag(
             EditionModule.class, "safeIdBuffering", true );
 
-    void registerProcedures( Procedures procedures ) throws KernelException
+    void registerProcedures( Procedures procedures, ProcedureConfig procedureConfig ) throws KernelException
     {
         procedures.registerProcedure( org.neo4j.kernel.builtinprocs.BuiltInProcedures.class );
         procedures.registerProcedure( org.neo4j.kernel.builtinprocs.TokenProcedures.class );
         procedures.registerProcedure( org.neo4j.kernel.builtinprocs.BuiltInDbmsProcedures.class );
         procedures.registerBuiltInFunctions( org.neo4j.kernel.builtinprocs.BuiltInFunctions.class );
-        registerTemporalFunctions( procedures );
+        registerTemporalFunctions( procedures, procedureConfig );
 
         registerEditionSpecificProcedures( procedures );
     }
@@ -127,8 +129,15 @@ public abstract class EditionModule
     public IdController idController;
 
     protected FileSystemWatcherService createFileSystemWatcherService( FileSystemAbstraction fileSystem, File storeDir,
-            LogService logging, JobScheduler jobScheduler, Predicate<String> fileNameFilter )
+            LogService logging, JobScheduler jobScheduler, Config config, Predicate<String> fileNameFilter )
     {
+        if ( !config.get( GraphDatabaseSettings.filewatcher_enabled ) )
+        {
+            Log log = logging.getInternalLog( getClass() );
+            log.info( "File watcher disabled by configuration." );
+            return FileSystemWatcherService.EMPTY_WATCHER;
+        }
+
         try
         {
             RestartableFileSystemWatcher watcher = new RestartableFileSystemWatcher( fileSystem.fileWatcher() );

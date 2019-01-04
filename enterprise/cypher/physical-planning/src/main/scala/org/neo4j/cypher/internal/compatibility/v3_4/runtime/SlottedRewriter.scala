@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.cypher.internal.compatibility.v3_4.runtime
 
@@ -213,18 +216,42 @@ class SlottedRewriter(tokenContext: TokenContext) {
 
       case existsFunction: FunctionInvocation if existsFunction.function == frontendFunctions.Exists =>
         existsFunction.args.head match {
-          case prop @ Property(Variable(key), PropertyKeyName(propKey)) =>
-            val maybeSpecializedExpression = specializeCheckIfPropertyExists(slotConfiguration, key, propKey, prop)
-            maybeSpecializedExpression.getOrElse(existsFunction)
+          case prop@Property(Variable(key), PropertyKeyName(propKey)) =>
+            val slot = slotConfiguration(key)
+            val maybeSpecializedExpression = specializeCheckIfPropertyExists(slotConfiguration, key, propKey, prop, slot)
+            if (slot.nullable && maybeSpecializedExpression.isDefined && maybeSpecializedExpression.get.isInstanceOf[LogicalProperty]) {
+              NullCheckProperty(slot.offset, maybeSpecializedExpression.get.asInstanceOf[LogicalProperty])
+            }
+            else
+              maybeSpecializedExpression.getOrElse(existsFunction)
 
           case _ => existsFunction // Don't know how to specialize this
         }
 
-      case e @ IsNull(prop @ Property(Variable(key), PropertyKeyName(propKey))) =>
-        val maybeSpecializedExpression = specializeCheckIfPropertyExists(slotConfiguration, key, propKey, prop)
-        if (maybeSpecializedExpression.isDefined)
-          Not(maybeSpecializedExpression.get)(e.position)
+      case e@IsNull(prop@Property(Variable(key), PropertyKeyName(propKey))) =>
+        val slot = slotConfiguration(key)
+        val maybeSpecializedExpression = specializeCheckIfPropertyExists(slotConfiguration, key, propKey, prop, slot)
+        if (maybeSpecializedExpression.isDefined) {
+          val propertyExists = maybeSpecializedExpression.get
+          val notPropertyExists = Not(propertyExists)(e.position)
+          if (slot.nullable)
+            Or(IsPrimitiveNull(slot.offset), notPropertyExists)(e.position)
+          else
+            notPropertyExists
+        }
         else
+          e
+
+      case e@IsNotNull(prop@Property(Variable(key), PropertyKeyName(propKey))) =>
+        val slot = slotConfiguration(key)
+        val maybeSpecializedExpression = specializeCheckIfPropertyExists(slotConfiguration, key, propKey, prop, slot)
+        if (maybeSpecializedExpression.isDefined) {
+          val propertyExists = maybeSpecializedExpression.get
+          if (slot.nullable)
+            And(Not(IsPrimitiveNull(slot.offset))(e.position), propertyExists)(e.position)
+          else
+            propertyExists
+        } else
           e
 
 //      case _: ReduceExpression =>
@@ -298,11 +325,10 @@ class SlottedRewriter(tokenContext: TokenContext) {
         predicate))
   }
 
-  private def specializeCheckIfPropertyExists(slotConfiguration: SlotConfiguration, key: String, propKey: String, prop: Property) = {
-    val slot = slotConfiguration(key)
+  private def specializeCheckIfPropertyExists(slotConfiguration: SlotConfiguration, key: String, propKey: String, prop: Property, slot: Slot) = {
     val maybeToken = tokenContext.getOptPropertyKeyId(propKey)
 
-    val propExpression = (slot, maybeToken) match {
+    (slot, maybeToken) match {
       case (LongSlot(offset, _, typ), Some(token)) if typ == CTNode =>
         Some(NodePropertyExists(offset, token, s"$key.$propKey")(prop))
 
@@ -318,12 +344,6 @@ class SlottedRewriter(tokenContext: TokenContext) {
       case _ =>
         None // Let the normal expression conversion work this out
     }
-
-    if (slot.nullable && propExpression.isDefined && propExpression.get.isInstanceOf[LogicalProperty]) {
-      Some(NullCheckProperty(slot.offset, propExpression.get.asInstanceOf[LogicalProperty]))
-    }
-    else
-      propExpression
   }
 
   private def stopAtOtherLogicalPlans(thisPlan: LogicalPlan): (AnyRef) => Boolean = {

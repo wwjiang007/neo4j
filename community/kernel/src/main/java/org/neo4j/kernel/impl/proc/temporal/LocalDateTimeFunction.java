@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -36,15 +36,15 @@ import static org.neo4j.internal.kernel.api.procs.Neo4jTypes.NTLocalDateTime;
 @Description( "Create a LocalDateTime instant." )
 class LocalDateTimeFunction extends TemporalFunction<LocalDateTimeValue>
 {
-    LocalDateTimeFunction()
+    LocalDateTimeFunction( Supplier<ZoneId> defaultZone )
     {
-        super( NTLocalDateTime );
+        super( NTLocalDateTime, defaultZone );
     }
 
     @Override
-    protected LocalDateTimeValue now( Clock clock, String timezone )
+    protected LocalDateTimeValue now( Clock clock, String timezone, Supplier<ZoneId> defaultZone )
     {
-        return timezone == null ? LocalDateTimeValue.now( clock ) : LocalDateTimeValue.now( clock, timezone );
+        return timezone == null ? LocalDateTimeValue.now( clock, defaultZone ) : LocalDateTimeValue.now( clock, timezone );
     }
 
     @Override
@@ -63,23 +63,6 @@ class LocalDateTimeFunction extends TemporalFunction<LocalDateTimeValue>
     protected LocalDateTimeValue select( AnyValue from, Supplier<ZoneId> defaultZone )
     {
         return LocalDateTimeValue.select( from, defaultZone );
-    }
-
-    @Override
-    protected LocalDateTimeValue positionalCreate( AnyValue[] input )
-    {
-        if ( input.length != 7 )
-        {
-            throw new IllegalArgumentException( "expected 7 arguments" );
-        }
-        return LocalDateTimeValue.localDateTime(
-                anInt( "year", input[0] ),
-                anInt( "month", input[1] ),
-                anInt( "day", input[2] ),
-                anInt( "hour", input[3] ),
-                anInt( "minute", input[4] ),
-                anInt( "second", input[5] ),
-                anInt( "nanos", input[6] ) );
     }
 
     @Override

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -23,6 +23,9 @@ import org.neo4j.cypher.internal.runtime.interpreted.ExecutionContext
 import org.neo4j.cypher.internal.runtime.interpreted.commands.expressions.{Expression, NumericHelper}
 import org.neo4j.cypher.internal.util.v3_4.attribution.Id
 
+import scala.collection.AbstractIterator
+import scala.collection.Iterator.empty
+
 case class LimitPipe(source: Pipe, exp: Expression)
                     (val id: Id = Id.INVALID_ID)
   extends PipeWithSource(source) with NumericHelper {
@@ -31,11 +34,21 @@ case class LimitPipe(source: Pipe, exp: Expression)
 
   protected def internalCreateResults(input: Iterator[ExecutionContext], state: QueryState): Iterator[ExecutionContext] = {
 
-    if(input.isEmpty)
-      return Iterator.empty
+    if (input.isEmpty) return empty
 
-    val limit = asInt(exp(state.createOrGetInitialContext(executionContextFactory), state))
+    val limit = asPrimitiveLong(exp(state.createOrGetInitialContext(executionContextFactory), state))
 
-    input.take(limit.value())
+    new AbstractIterator[ExecutionContext] {
+      private var remaining = limit
+
+      def hasNext: Boolean = remaining > 0 && input.hasNext
+
+      def next(): ExecutionContext =
+        if (remaining > 0L) {
+          remaining -= 1L
+          input.next()
+        }
+        else empty.next()
+    }
   }
 }

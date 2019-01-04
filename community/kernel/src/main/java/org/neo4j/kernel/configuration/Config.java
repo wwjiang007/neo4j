@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -367,7 +367,7 @@ public class Config implements DiagnosticsProvider, Configuration
      * @param value The initial value to give the setting.
      */
     @Nonnull
-    public static Config defaults( @Nonnull final Setting<?> setting, @Nonnull final String value )
+    public static Config defaults( @Nonnull final Setting<?> setting, final String value )
     {
         return builder().withSetting( setting, value ).build();
     }

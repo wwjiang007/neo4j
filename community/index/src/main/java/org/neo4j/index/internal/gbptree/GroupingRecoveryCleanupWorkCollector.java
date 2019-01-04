@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -20,9 +20,10 @@
 package org.neo4j.index.internal.gbptree;
 
 import java.util.Queue;
+import java.util.StringJoiner;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.function.Consumer;
 
-import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.scheduler.JobScheduler;
 
 import static org.neo4j.scheduler.JobScheduler.Groups.recoveryCleanup;
@@ -32,7 +33,7 @@ import static org.neo4j.scheduler.JobScheduler.Groups.recoveryCleanup;
  * <p>
  * Also see {@link RecoveryCleanupWorkCollector}
  */
-public class GroupingRecoveryCleanupWorkCollector extends LifecycleAdapter implements RecoveryCleanupWorkCollector
+public class GroupingRecoveryCleanupWorkCollector extends RecoveryCleanupWorkCollector
 {
     private final Queue<CleanupJob> jobs;
     private final JobScheduler jobScheduler;
@@ -51,7 +52,13 @@ public class GroupingRecoveryCleanupWorkCollector extends LifecycleAdapter imple
     public void init()
     {
         started = false;
-        jobs.clear();
+        if ( !jobs.isEmpty() )
+        {
+            StringJoiner joiner = new StringJoiner( String.format( "%n  " ), "Did not expect there to be any cleanup jobs still here. Jobs[", "]" );
+            consumeAndCloseJobs( cj -> joiner.add( jobs.toString() ) );
+            throw new IllegalStateException( joiner.toString() );
+        }
+
     }
 
     @Override
@@ -71,6 +78,12 @@ public class GroupingRecoveryCleanupWorkCollector extends LifecycleAdapter imple
         started = true;
     }
 
+    @Override
+    public void shutdown()
+    {
+        consumeAndCloseJobs( cj -> {} );
+    }
+
     private void scheduleJobs()
     {
         jobScheduler.schedule( recoveryCleanup, allJobs() );
@@ -79,35 +92,46 @@ public class GroupingRecoveryCleanupWorkCollector extends LifecycleAdapter imple
     private Runnable allJobs()
     {
         return () ->
+                executeWithExecutor( executor ->
+                {
+                    CleanupJob job;
+                    Exception jobsException = null;
+                    while ( (job = jobs.poll()) != null )
+                    {
+                        try
+                        {
+                            job.run( executor );
+                        }
+                        catch ( Exception e )
+                        {
+                            if ( jobsException == null )
+                            {
+                                jobsException = e;
+                            }
+                            else
+                            {
+                                jobsException.addSuppressed( e );
+                            }
+                        }
+                        finally
+                        {
+                            job.close();
+                        }
+                    }
+                    if ( jobsException != null )
+                    {
+                        throw new RuntimeException( jobsException );
+                    }
+                } );
+    }
+
+    private void consumeAndCloseJobs( Consumer<CleanupJob> consumer )
+    {
+        CleanupJob job;
+        while ( (job = jobs.poll()) != null )
         {
-            CleanupJob job;
-            Exception jobsException = null;
-            while ( (job = jobs.poll()) != null )
-            {
-                try
-                {
-                    job.run();
-                }
-                catch ( Exception e )
-                {
-                    if ( jobsException == null )
-                    {
-                        jobsException = e;
-                    }
-                    else
-                    {
-                        jobsException.addSuppressed( e );
-                    }
-                }
-                finally
-                {
-                    job.close();
-                }
-            }
-            if ( jobsException != null )
-            {
-                throw new RuntimeException( jobsException );
-            }
-        };
+            consumer.accept( job );
+            job.close();
+        }
     }
 }

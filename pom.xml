@@ -5,7 +5,7 @@
 
   <groupId>org.neo4j</groupId>
   <artifactId>parent</artifactId>
-  <version>3.4.0-SNAPSHOT</version>
+  <version>3.4.12-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Neo4j</name>
   <description>Neo4j Graph Database</description>
@@ -25,7 +25,7 @@
 
   <licenses>
     <license>
-      <name>GNU Affero General Public License, Version 3</name>
+      <name>GNU Affero General Public License, Version 3 with the Commons Clause</name>
       <url>http://www.gnu.org/licenses/agpl-3.0-standalone.html</url>
     </license>
   </licenses>
@@ -64,11 +64,11 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
-    <licensing.prepend.text>notice-agpl-prefix.txt</licensing.prepend.text>
+    <licensing.prepend.text>licensing/notice-agpl-prefix.txt</licensing.prepend.text>
     <lucene.version>5.5.5</lucene.version>
-    <bouncycastle.version>1.59</bouncycastle.version>
+    <bouncycastle.version>1.60</bouncycastle.version>
     <generate-config-docs-phase>prepare-package</generate-config-docs-phase>
-    <java9.exports/>
+    <java.exports/>
     <test.runner.jvm/>
     <test.runner.jvm.settings.additional/>
     <test.runner.jvm.settings>-Xmx2G -XX:+UseG1GC -XX:-OmitStackTraceInFastThrow -XX:+HeapDumpOnOutOfMemoryError
@@ -77,29 +77,33 @@
       -Dorg.neo4j.io.pagecache.impl.muninn.usePreciseCursorErrorStackTraces=true
       -Dorg.neo4j.kernel.impl.api.KernelStatement.trackStatements=true
       -Dorg.org.neo4j.kernel.impl.newapi.DefaultCursors.trackCursors=true
-      -XX:+UnlockExperimentalVMOptions -XX:+TrustFinalNonStaticFields ${java9.exports} ${test.runner.jvm.settings.additional}
+      -XX:+UnlockExperimentalVMOptions -XX:+TrustFinalNonStaticFields ${java.exports} ${test.runner.jvm.settings.additional}
     </test.runner.jvm.settings>
-    <jetty.version>9.4.8.v20171121</jetty.version>
+    <jetty.version>9.4.11.v20180605</jetty.version>
     <findbugs.version>3.0.1</findbugs.version>
     <git.commit>unknown-commit</git.commit>
     <forkCounts>0</forkCounts>
     <maven.build.timestamp.format>yyMMddHHmmssSSS</maven.build.timestamp.format>
 
-    <licensesVersion>7</licensesVersion>
-    <license-text.header>AGPL-3-header.txt</license-text.header>
+    <license-text.header>headers/AGPL-3-header.txt</license-text.header>
 
     <scala-maven-plugin.version>3.3.2</scala-maven-plugin.version>
     <scala.version>2.11.12</scala.version>
     <scala.binary.version>2.11</scala.binary.version>
-    <asm.version>6.0</asm.version>
+    <asm.version>6.2</asm.version>
     <metrics.version>4.0.2</metrics.version>
     <scala.target.vm>1.8</scala.target.vm>
-    <scala.java9.arg/>
+    <scala.java.additional.args/>
     <jersey.version>1.19.3</jersey.version>
-    <checkstyle.strict>true</checkstyle.strict>
+    <currentYear>2018</currentYear>
+    <cypher.compatibility.23>2.3.12</cypher.compatibility.23>
+    <cypher.compatibility.31>3.1.9</cypher.compatibility.31>
+    <cypher.compatibility.33>3.3.9</cypher.compatibility.33>
+    <caffeine.version>2.6.2</caffeine.version>
   </properties>
 
   <modules>
+    <module>build-resources</module>
     <module>community</module>
     <module>enterprise</module>
     <module>integrationtests</module>
@@ -157,7 +161,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-javadoc-plugin</artifactId>
-          <version>3.0.0-M1</version>
+          <version>3.0.0</version>
           <executions>
             <execution>
               <id>generate-javadocs</id>
@@ -176,7 +180,6 @@
             <detectLinks>false</detectLinks>
             <detectOfflineLinks>false</detectOfflineLinks>
             <quiet>true</quiet>
-            <sourcepath>${project.build.sourceDirectory}</sourcepath>
             <reportOutputDirectory>${project.build.directory}/apidocs</reportOutputDirectory>
 
             <!-- Defines grouping for overview -->
@@ -261,6 +264,11 @@
                     </include>
                     <exclude>
                       <item>org\.neo4j\.graphdb\.Path</item>
+                      <!--TODO remove this again once released-->
+                      <item>org\.neo4j\.server\.rest\.repr\.ListRepresentation</item>
+                      <item>org\.neo4j\.server\.rest\.repr\.RepresentationType</item>
+                      <item>org\.neo4j\.server\.rest\.repr\.ValueRepresentation</item>
+                      <item>org\.neo4j\.server\.helpers\.PropertyTypeDispatcher</item>
                     </exclude>
                   </classes>
                   <packages>
@@ -297,37 +305,6 @@
                 <item>
                   <!-- Ignore for now since some are already published, should be removed in 4.0 -->
                   <code>java.class.nonPublicPartOfAPI</code>
-                </item>
-                <item>
-                  <code>java.class.noLongerImplementsInterface</code>
-                  <class>org.neo4j.graphalgo.WeightedPath</class>
-                  <justification>Cleanup accidental Path exposure as a Resource.</justification>
-                </item>
-                <item>
-                  <code>java.class.removed</code>
-                  <old>interface org.neo4j.management.Cache</old>
-                  <classSimpleName>Cache</classSimpleName>
-                  <package>org.neo4j.management</package>
-                  <elementKind>interface</elementKind>
-                  <justification>The implemented class was removed in 3.0, but this interface lingered on.</justification>
-                </item>
-                <item>
-                  <code>java.method.removed</code>
-                  <classSimpleName>Neo4jManager</classSimpleName>
-                  <methodName>getCacheBeans</methodName>
-                  <package>org.neo4j.management</package>
-                  <elementKind>method</elementKind>
-                  <justification>The implemented class was removed in 3.0, but this interface lingered on.</justification>
-                </item>
-                <item>
-                  <code>java.class.removed</code>
-                  <class>org.neo4j.helpers.FailableConcurrentTransfer</class>
-                  <justification>Class is never used</justification>
-                </item>
-                <item>
-                  <code>java.field.nowFinal</code>
-                  <old>field org.neo4j.graphdb.InputPosition.empty</old>
-                  <justification>Changes to this field should not be allowed</justification>
                 </item>
               </revapi.ignore>
               <revapi.semver.ignore>
@@ -372,6 +349,7 @@
           <version>2.21.0</version>
           <configuration>
             <forkCount>${forkCounts}</forkCount>
+            <trimStackTrace>false</trimStackTrace>
             <reuseForks>true</reuseForks>
             <argLine>${test.runner.jvm.settings}</argLine>
             <runOrder>random</runOrder>
@@ -393,6 +371,7 @@
           <configuration>
             <argLine>${test.runner.jvm.settings}</argLine>
             <forkCount>${forkCounts}</forkCount>
+            <trimStackTrace>false</trimStackTrace>
             <reuseForks>true</reuseForks>
             <runOrder>random</runOrder>
             <includes>
@@ -503,12 +482,12 @@
               </goals>
               <configuration>
                 <licensingRequirementFiles>
-                  <licensingRequirementFile>licensing-requirements-base.xml</licensingRequirementFile>
+                  <licensingRequirementFile>licensing/licensing-requirements-base.xml</licensingRequirementFile>
                 </licensingRequirementFiles>
                 <thirdPartyLicensingFilename>${project.artifactId}-${project.version}-NOTICE.txt
                 </thirdPartyLicensingFilename>
                 <checkExistingNoticeFile>${project.build.directory}/../NOTICE.txt</checkExistingNoticeFile>
-                <listPrependText>list-prefix.txt</listPrependText>
+                <listPrependText>licensing/list-prefix.txt</listPrependText>
                 <listReport>${project.artifactId}-${project.version}-LICENSES.txt</listReport>
                 <checkExistingLicensesFile>${project.build.directory}/../LICENSES.txt</checkExistingLicensesFile>
               </configuration>
@@ -517,7 +496,53 @@
           <dependencies>
             <dependency>
               <groupId>org.neo4j.build</groupId>
-              <artifactId>licensecheck-config</artifactId>
+              <artifactId>build-resources</artifactId>
+              <version>${project.version}</version>
+            </dependency>
+          </dependencies>
+        </plugin>
+        <plugin>
+          <groupId>com.mycila</groupId>
+          <artifactId>license-maven-plugin</artifactId>
+          <version>3.0</version>
+          <executions>
+            <execution>
+              <id>check-licenses</id>
+              <!-- fail as early as possible -->
+              <phase>initialize</phase>
+              <goals>
+                <goal>check</goal>
+              </goals>
+            </execution>
+          </executions>
+          <configuration>
+            <strictCheck>true</strictCheck>
+            <header>${license-text.header}</header>
+            <includes>
+              <include>src/**/*.java</include>
+              <include>src/**/*.js</include>
+              <include>src/**/*.scala</include>
+              <include>src/**/*.xml</include>
+              <include>src/**/*.feature</include>
+              <include>src/**/*.g4</include>
+            </includes>
+            <excludes>
+              <exclude>**/cypher-shell/*</exclude>
+            </excludes>
+            <mapping>
+              <java>SLASHSTAR_STYLE</java>
+              <scala>SLASHSTAR_STYLE</scala>
+              <feature>SCRIPT_STYLE</feature>
+              <g4>SLASHSTAR_STYLE</g4>
+            </mapping>
+            <properties>
+              <currentYear>${currentYear}</currentYear>
+            </properties>
+          </configuration>
+          <dependencies>
+            <dependency>
+              <groupId>org.neo4j.build</groupId>
+              <artifactId>build-resources</artifactId>
               <version>${project.version}</version>
             </dependency>
           </dependencies>
@@ -537,7 +562,7 @@
               <arg>100</arg>
               <arg>-Xlint</arg>
               <arg>-target:jvm-${scala.target.vm}</arg>
-              <arg>${scala.java9.arg}</arg>
+              <arg>${scala.java.additional.args}</arg>
             </args>
             <jvmArgs>
               <jvmArg>-Xms64m</jvmArg>
@@ -574,7 +599,7 @@
             <rules>
               <evaluateBeanshell>
                 <message>Maven module has to be in a "groupId" beginning with "org.neo4j"</message>
-                <condition>String s = "${project.groupId}"; s.startsWith("org.neo4j")</condition>
+		<condition>{String s = "${project.groupId}"; s.startsWith("org.neo4j");}</condition>
               </evaluateBeanshell>
               <requireFilesDontExist>
                 <message>You are not allowed to have classes in "com" package</message>
@@ -596,7 +621,7 @@
           <configuration>
             <showDeprecation>true</showDeprecation>
             <showWarnings>true</showWarnings>
-            <compilerArgument>${java9.exports}</compilerArgument>
+            <compilerArgument>${java.exports}</compilerArgument>
           </configuration>
         </plugin>
         <plugin>
@@ -653,11 +678,6 @@
           <version>1.4.0</version>
         </plugin>
         <plugin>
-          <groupId>org.neo4j.build.plugins</groupId>
-          <artifactId>license-maven-plugin</artifactId>
-          <version>3</version>
-        </plugin>
-        <plugin>
           <groupId>org.owasp</groupId>
           <artifactId>dependency-check-maven</artifactId>
           <version>3.1.2</version>
@@ -693,11 +713,9 @@
         <artifactId>maven-checkstyle-plugin</artifactId>
         <version>3.0.0</version>
         <configuration>
-          <configLocation>build/checkstyle.xml</configLocation>
+          <configLocation>checkstyle/checkstyle.xml</configLocation>
           <consoleOutput>true</consoleOutput>
           <logViolationsToConsole>true</logViolationsToConsole>
-          <failsOnError>${checkstyle.strict}</failsOnError>
-          <failOnViolation>${checkstyle.strict}</failOnViolation>
           <includeTestSourceDirectory>true</includeTestSourceDirectory>
         </configuration>
         <dependencies>
@@ -705,6 +723,11 @@
             <groupId>com.puppycrawl.tools</groupId>
             <artifactId>checkstyle</artifactId>
             <version>8.8</version>
+          </dependency>
+          <dependency>
+            <groupId>org.neo4j.build</groupId>
+            <artifactId>build-resources</artifactId>
+            <version>${project.version}</version>
           </dependency>
         </dependencies>
         <executions>
@@ -731,56 +754,6 @@
             </goals>
           </execution>
         </executions>
-      </plugin>
-
-      <!-- Always validate licenses -->
-      <plugin>
-        <groupId>org.neo4j.build.plugins</groupId>
-        <artifactId>license-maven-plugin</artifactId>
-        <dependencies>
-          <dependency>
-            <groupId>org.neo4j.maven</groupId>
-            <artifactId>licenses</artifactId>
-            <version>${licensesVersion}</version>
-          </dependency>
-        </dependencies>
-        <executions>
-          <execution>
-            <id>check-licenses</id>
-            <!-- fail as early as possible -->
-            <phase>initialize</phase>
-            <goals>
-              <goal>check</goal>
-            </goals>
-          </execution>
-        </executions>
-        <configuration>
-          <strictCheck>true</strictCheck>
-          <header>${license-text.header}</header>
-          <includes>
-            <include>src/**/*.java</include>
-            <include>src/**/*.js</include>
-            <include>src/**/*.scala</include>
-            <include>src/**/*.xml</include>
-            <include>src/**/*.feature</include>
-            <include>src/**/*.g4</include>
-          </includes>
-          <excludes>
-            <exclude>**/lib/*.js</exclude>
-            <exclude>**/lib/**/*.js</exclude>
-            <exclude>**/javascript/vend/**</exclude>
-          </excludes>
-          <mapping>
-            <java>SLASHSTAR_STYLE</java>
-            <scala>SLASHSTAR_STYLE</scala>
-            <feature>SCRIPT_STYLE</feature>
-            <g4>SLASHSTAR_STYLE</g4>
-          </mapping>
-          <timestampPropertyName>currentYear</timestampPropertyName>
-          <properties>
-            <inceptionYear>${project.inceptionYear}</inceptionYear>
-          </properties>
-        </configuration>
       </plugin>
 
       <!-- Always enforce -->
@@ -814,6 +787,10 @@
           <plugin>
             <groupId>org.neo4j.build.plugins</groupId>
             <artifactId>licensing-maven-plugin</artifactId>
+          </plugin>
+          <plugin>
+            <groupId>com.mycila</groupId>
+            <artifactId>license-maven-plugin</artifactId>
           </plugin>
         </plugins>
       </build>
@@ -924,15 +901,15 @@
     </profile>
 
     <profile>
-      <id>java9</id>
+      <id>java9And10</id>
       <activation>
         <activeByDefault>false</activeByDefault>
-        <jdk>9</jdk>
+        <jdk>[9, 11)</jdk>
       </activation>
       <properties>
-        <java9.exports>--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-modules java.xml.bind</java9.exports>
+        <java.exports>--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-modules java.xml.bind</java.exports>
         <maven.javadoc.skip>true</maven.javadoc.skip>
-        <scala.java9.arg>-nobootcp</scala.java9.arg>
+        <scala.java.additional.args>-nobootcp</scala.java.additional.args>
       </properties>
     </profile>
 
@@ -996,7 +973,7 @@
       <dependency>
         <groupId>com.github.ben-manes.caffeine</groupId>
         <artifactId>caffeine</artifactId>
-        <version>2.6.2</version>
+        <version>${caffeine.version}</version>
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>
@@ -1013,7 +990,7 @@
       <dependency>
         <groupId>org.neo4j.driver</groupId>
         <artifactId>neo4j-java-driver</artifactId>
-        <version>1.5.1</version>
+        <version>1.5.2</version>
         <scope>test</scope>
       </dependency>
       <dependency>
@@ -1082,7 +1059,7 @@
       <dependency>
         <groupId>org.mockito</groupId>
         <artifactId>mockito-core</artifactId>
-        <version>2.17.0</version>
+        <version>2.18.3</version>
         <scope>test</scope>
       </dependency>
 
@@ -1224,6 +1201,12 @@
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-compress</artifactId>
         <version>1.16.1</version>
+        <exclusions>
+          <exclusion>
+            <groupId>org.objenesis</groupId>
+            <artifactId>objenesis</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
 
       <!-- Netty is used by three components: Com, Cluster and Bolt Socket Transport.
@@ -1241,7 +1224,7 @@
       <dependency>
         <groupId>io.netty</groupId>
         <artifactId>netty-all</artifactId>
-        <version>4.1.23.Final</version>
+        <version>4.1.24.Final</version>
       </dependency>
 
       <dependency>

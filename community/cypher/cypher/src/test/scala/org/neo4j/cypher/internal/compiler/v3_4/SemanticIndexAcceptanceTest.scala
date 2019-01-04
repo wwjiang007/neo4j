@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -20,10 +20,12 @@
 package org.neo4j.cypher.internal.compiler.v3_4
 
 import java.time.{ZoneId, ZoneOffset}
+import java.util.concurrent.TimeUnit
 
 import org.neo4j.cypher.ExecutionEngineFunSuite
 import org.neo4j.values.storable._
-import org.scalacheck.Gen
+import org.neo4j.values.utils.TemporalUtil
+import org.scalacheck.{Gen, Shrink}
 import org.scalacheck.Arbitrary.arbitrary
 import org.scalatest.matchers.{MatchResult, Matcher}
 import org.scalatest.prop.PropertyChecks
@@ -44,12 +46,14 @@ import scala.collection.JavaConversions._
   */
 class SemanticIndexAcceptanceTest extends ExecutionEngineFunSuite with PropertyChecks {
 
+  //we don't want scala check to shrink strings since it hides the actual error
+  implicit val dontShrink: Shrink[String] = Shrink(s => Stream.empty)
+
   private val allCRS: Map[Int, Array[CoordinateReferenceSystem]] = CoordinateReferenceSystem.all().toArray.groupBy(_.getDimension)
   private val allCRSDimensions = allCRS.keys.toArray
   private val oneDay = DurationValue.duration(0, 1, 0, 0)
   private val oneSecond = DurationValue.duration(0, 0, 1, 0)
   private val timeZones:Seq[ZoneId] = ZoneId.getAvailableZoneIds.toSeq.map(ZoneId.of)
-  private val NANOS_PER_SECOND = 1000000000L
   private val MAX_NANOS_PER_DAY = 86399999999999L
 
   // ----------------
@@ -75,6 +79,10 @@ class SemanticIndexAcceptanceTest extends ExecutionEngineFunSuite with PropertyC
 
   override protected def initTest(): Unit = {
     super.initTest()
+    graph.createIndex("Label", "indexed")
+    graph.inTx {
+      graph.schema().awaitIndexesOnline(10, TimeUnit.SECONDS)
+    }
     for(_ <- 1 to 1000) createLabeledNode("Label")
   }
 
@@ -104,13 +112,13 @@ class SemanticIndexAcceptanceTest extends ExecutionEngineFunSuite with PropertyC
 
   def timeGen: Gen[TimeValue] =
     for { // stay one second off min and max time, to allow getting a bigger and smaller value
-      nanosOfDay <- Gen.chooseNum(NANOS_PER_SECOND, MAX_NANOS_PER_DAY - NANOS_PER_SECOND)
+      nanosOfDayLocal <- Gen.chooseNum(TemporalUtil.NANOS_PER_SECOND, MAX_NANOS_PER_DAY - TemporalUtil.NANOS_PER_SECOND)
       timeZone <- zoneOffsetGen
-    } yield TimeValue.time(nanosOfDay, timeZone)
+    } yield TimeValue.time(TemporalUtil.nanosOfDayToUTC(nanosOfDayLocal, timeZone.getTotalSeconds), timeZone)
 
   def localTimeGen: Gen[LocalTimeValue] =
     for {
-      nanosOfDay <- Gen.chooseNum(NANOS_PER_SECOND, MAX_NANOS_PER_DAY - NANOS_PER_SECOND)
+      nanosOfDay <- Gen.chooseNum(TemporalUtil.NANOS_PER_SECOND, MAX_NANOS_PER_DAY - TemporalUtil.NANOS_PER_SECOND)
     } yield LocalTimeValue.localTime(nanosOfDay)
 
   def dateGen: Gen[DateValue] =
@@ -122,14 +130,14 @@ class SemanticIndexAcceptanceTest extends ExecutionEngineFunSuite with PropertyC
   def dateTimeGen: Gen[DateTimeValue] =
     for {
       epochSecondsUTC <- arbitrary[Int]
-      nanosOfSecond <- Gen.chooseNum(0, NANOS_PER_SECOND-1)
+      nanosOfSecond <- Gen.chooseNum(0, TemporalUtil.NANOS_PER_SECOND-1)
       timeZone <- Gen.oneOf(zoneIdGen, zoneOffsetGen)
     } yield DateTimeValue.datetime(epochSecondsUTC, nanosOfSecond, timeZone)
 
   def localDateTimeGen: Gen[LocalDateTimeValue] =
     for {
       epochSeconds <- arbitrary[Int]
-      nanosOfSecond <- Gen.chooseNum(0, NANOS_PER_SECOND-1)
+      nanosOfSecond <- Gen.chooseNum(0, TemporalUtil.NANOS_PER_SECOND-1)
     } yield LocalDateTimeValue.localDateTime(epochSeconds, nanosOfSecond)
 
   def zoneIdGen: Gen[ZoneId] = Gen.oneOf(timeZones)
@@ -170,7 +178,6 @@ class SemanticIndexAcceptanceTest extends ExecutionEngineFunSuite with PropertyC
     }
 
     test(s"testing ${setup.name} with n.prop $operator $$argument") {
-      graph.createIndex("Label", "indexed")
       forAll(setup.generator) { propertyValue: T =>
         graph.inTx {
           createLabeledNode(Map("nonIndexed" -> propertyValue.asObject(), "indexed" -> propertyValue.asObject()), "Label")

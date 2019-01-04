@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -36,15 +36,15 @@ import static org.neo4j.internal.kernel.api.procs.Neo4jTypes.NTLocalTime;
 @Description( "Create a LocalTime instant." )
 class LocalTimeFunction extends TemporalFunction<LocalTimeValue>
 {
-    LocalTimeFunction()
+    LocalTimeFunction( Supplier<ZoneId> defaultZone )
     {
-        super( NTLocalTime );
+        super( NTLocalTime, defaultZone );
     }
 
     @Override
-    protected LocalTimeValue now( Clock clock, String timezone )
+    protected LocalTimeValue now( Clock clock, String timezone, Supplier<ZoneId> defaultZone  )
     {
-        return timezone == null ? LocalTimeValue.now( clock ) : LocalTimeValue.now( clock, timezone );
+        return timezone == null ? LocalTimeValue.now( clock, defaultZone ) : LocalTimeValue.now( clock, timezone );
     }
 
     @Override
@@ -63,20 +63,6 @@ class LocalTimeFunction extends TemporalFunction<LocalTimeValue>
     protected LocalTimeValue select( AnyValue from, Supplier<ZoneId> defaultZone )
     {
         return LocalTimeValue.select( from, defaultZone );
-    }
-
-    @Override
-    protected LocalTimeValue positionalCreate( AnyValue[] input )
-    {
-        if ( input.length != 4 )
-        {
-            throw new IllegalArgumentException( "expected 4 arguments" );
-        }
-        return LocalTimeValue.localTime(
-                anInt( "hour", input[0] ),
-                anInt( "minute", input[1] ),
-                anInt( "second", input[2] ),
-                anInt( "nanos", input[3] ) );
     }
 
     @Override

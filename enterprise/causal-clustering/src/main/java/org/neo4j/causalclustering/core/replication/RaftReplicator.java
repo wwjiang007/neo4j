@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.core.replication;
 
@@ -27,21 +30,21 @@ import org.neo4j.causalclustering.core.consensus.LeaderListener;
 import org.neo4j.causalclustering.core.consensus.LeaderLocator;
 import org.neo4j.causalclustering.core.consensus.NoLeaderFoundException;
 import org.neo4j.causalclustering.core.consensus.RaftMessages;
+import org.neo4j.causalclustering.core.replication.monitoring.ReplicationMonitor;
 import org.neo4j.causalclustering.core.replication.session.LocalSessionPool;
 import org.neo4j.causalclustering.core.replication.session.OperationContext;
 import org.neo4j.causalclustering.helper.TimeoutStrategy;
 import org.neo4j.causalclustering.identity.MemberId;
 import org.neo4j.causalclustering.messaging.Outbound;
-import org.neo4j.graphdb.DatabaseShutdownException;
 import org.neo4j.kernel.AvailabilityGuard;
-import org.neo4j.kernel.lifecycle.LifecycleAdapter;
+import org.neo4j.kernel.monitoring.Monitors;
 import org.neo4j.logging.Log;
 import org.neo4j.logging.LogProvider;
 
 /**
  * A replicator implementation suitable in a RAFT context. Will handle resending due to timeouts and leader switches.
  */
-public class RaftReplicator extends LifecycleAdapter implements Replicator, LeaderListener
+public class RaftReplicator implements Replicator, LeaderListener
 {
     private final MemberId me;
     private final Outbound<MemberId,RaftMessages.RaftMessage> outbound;
@@ -53,10 +56,12 @@ public class RaftReplicator extends LifecycleAdapter implements Replicator, Lead
     private final TimeoutStrategy leaderTimeoutStrategy;
     private final Log log;
     private final Throttler throttler;
+    private final ReplicationMonitor replicationMonitor;
+    private final long availabilityTimeoutMillis;
 
     public RaftReplicator( LeaderLocator leaderLocator, MemberId me, Outbound<MemberId,RaftMessages.RaftMessage> outbound, LocalSessionPool sessionPool,
             ProgressTracker progressTracker, TimeoutStrategy progressTimeoutStrategy, TimeoutStrategy leaderTimeoutStrategy,
-            AvailabilityGuard availabilityGuard, LogProvider logProvider, long replicationLimit )
+            long availabilityTimeoutMillis, AvailabilityGuard availabilityGuard, LogProvider logProvider, long replicationLimit, Monitors monitors )
     {
         this.me = me;
         this.outbound = outbound;
@@ -64,74 +69,134 @@ public class RaftReplicator extends LifecycleAdapter implements Replicator, Lead
         this.sessionPool = sessionPool;
         this.progressTimeoutStrategy = progressTimeoutStrategy;
         this.leaderTimeoutStrategy = leaderTimeoutStrategy;
+        this.availabilityTimeoutMillis = availabilityTimeoutMillis;
         this.availabilityGuard = availabilityGuard;
         this.throttler = new Throttler( replicationLimit );
         this.leaderLocator = leaderLocator;
         leaderLocator.registerListener( this );
         log = logProvider.getLog( getClass() );
+        this.replicationMonitor = monitors.newMonitor( ReplicationMonitor.class );
     }
 
     @Override
-    public Future<Object> replicate( ReplicatedContent command, boolean trackResult ) throws InterruptedException
+    public Future<Object> replicate( ReplicatedContent command, boolean trackResult ) throws ReplicationFailureException
     {
+        MemberId originalLeader;
+        try
+        {
+            originalLeader = leaderLocator.getLeader();
+        }
+        catch ( NoLeaderFoundException e )
+        {
+            throw new ReplicationFailureException( "Replication aborted since no leader was available", e );
+        }
+
         if ( command.hasSize() )
         {
-            return throttler.invoke( () -> replicate0( command, trackResult ), command.size() );
+            try
+            {
+                return throttler.invoke( () -> replicate0( command, trackResult, originalLeader ), command.size() );
+            }
+            catch ( InterruptedException e )
+            {
+                throw new ReplicationFailureException( "Interrupted while waiting for replication credits", e );
+            }
         }
         else
         {
-            return replicate0( command, trackResult );
+            return replicate0( command, trackResult, originalLeader );
         }
     }
 
-    private Future<Object> replicate0( ReplicatedContent command, boolean trackResult ) throws InterruptedException
+    private Future<Object> replicate0( ReplicatedContent command, boolean trackResult, MemberId leader ) throws ReplicationFailureException
     {
-        OperationContext session = sessionPool.acquireSession();
-
-        DistributedOperation operation = new DistributedOperation( command, session.globalSession(), session.localOperationId() );
-        Progress progress = progressTracker.start( operation );
-
-        TimeoutStrategy.Timeout progressTimeout = progressTimeoutStrategy.newTimeout();
-        TimeoutStrategy.Timeout leaderTimeout = leaderTimeoutStrategy.newTimeout();
-        do
+        replicationMonitor.startReplication();
+        try
         {
-            assertDatabaseNotShutdown();
+            assertNoLeaderSwitch( leader );
+
+            OperationContext session = sessionPool.acquireSession();
+
+            DistributedOperation operation = new DistributedOperation( command, session.globalSession(), session.localOperationId() );
+            Progress progress = progressTracker.start( operation );
+
+            TimeoutStrategy.Timeout progressTimeout = progressTimeoutStrategy.newTimeout();
+            TimeoutStrategy.Timeout leaderTimeout = leaderTimeoutStrategy.newTimeout();
+            int attempts = 0;
             try
             {
-                // blocking at least until the send has succeeded or failed before retrying
-                outbound.send( leaderLocator.getLeader(), new RaftMessages.NewEntry.Request( me, operation ), true );
+                do
+                {
+                    attempts++;
+                    if ( attempts > 1 )
+                    {
+                        log.info( "Retrying replication. Current attempt: %d Content: %s", attempts, command );
+                    }
+                    replicationMonitor.replicationAttempt();
+                    assertDatabaseAvailable();
+                    try
+                    {
+                        // blocking at least until the send has succeeded or failed before retrying
+                        outbound.send( leader, new RaftMessages.NewEntry.Request( me, operation ), true );
 
-                leaderTimeout = leaderTimeoutStrategy.newTimeout();
+                        leaderTimeout = leaderTimeoutStrategy.newTimeout();
 
-                progress.awaitReplication( progressTimeout.getMillis() );
-                progressTimeout.increment();
+                        progress.awaitReplication( progressTimeout.getMillis() );
+                        progressTimeout.increment();
+                        leader = leaderLocator.getLeader();
+                    }
+                    catch ( NoLeaderFoundException e )
+                    {
+                        log.debug( "Could not replicate operation " + operation + " because no leader was found. Retrying.", e );
+                        Thread.sleep( leaderTimeout.getMillis() );
+                        leaderTimeout.increment();
+                    }
+                }
+                while ( !progress.isReplicated() );
             }
             catch ( InterruptedException e )
             {
                 progressTracker.abort( operation );
-                throw e;
+                throw new ReplicationFailureException( "Interrupted while replicating", e );
             }
-            catch ( NoLeaderFoundException e )
+
+            BiConsumer<Object,Throwable> cleanup = ( ignored1, ignored2 ) -> sessionPool.releaseSession( session );
+
+            if ( trackResult )
             {
-                log.debug( "Could not replicate operation " + operation + " because no leader was found. Retrying.", e );
-                Thread.sleep( leaderTimeout.getMillis() );
-                leaderTimeout.increment();
+                progress.futureResult().whenComplete( cleanup );
             }
+            else
+            {
+                cleanup.accept( null, null );
+            }
+            replicationMonitor.successfulReplication();
+            return progress.futureResult();
         }
-        while ( !progress.isReplicated() );
-
-        BiConsumer<Object,Throwable> cleanup = ( ignored1, ignored2 ) -> sessionPool.releaseSession( session );
-
-        if ( trackResult )
+        catch ( Throwable t )
         {
-            progress.futureResult().whenComplete( cleanup );
-        }
-        else
-        {
-            cleanup.accept( null, null );
+            replicationMonitor.failedReplication( t );
+            throw t;
         }
 
-        return progress.futureResult();
+    }
+
+    private void assertNoLeaderSwitch( MemberId originalLeader ) throws ReplicationFailureException
+    {
+        MemberId currentLeader;
+        try
+        {
+            currentLeader = leaderLocator.getLeader();
+        }
+        catch ( NoLeaderFoundException e )
+        {
+            throw new ReplicationFailureException( "Replication aborted since no leader was available", e );
+        }
+
+        if ( !currentLeader.equals( originalLeader ) )
+        {
+            throw new ReplicationFailureException( "Replication aborted since a leader switch was detected" );
+        }
     }
 
     @Override
@@ -140,11 +205,15 @@ public class RaftReplicator extends LifecycleAdapter implements Replicator, Lead
         progressTracker.triggerReplicationEvent();
     }
 
-    private void assertDatabaseNotShutdown()
+    private void assertDatabaseAvailable() throws ReplicationFailureException
     {
-        if ( availabilityGuard.isShutdown() )
+        try
         {
-            throw new DatabaseShutdownException( "Database has been shutdown, transaction cannot be replicated." );
+            availabilityGuard.await( availabilityTimeoutMillis );
+        }
+        catch ( AvailabilityGuard.UnavailableException e )
+        {
+            throw new ReplicationFailureException( "Database is not available, transaction cannot be replicated.", e );
         }
     }
 }

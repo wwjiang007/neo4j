@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -44,6 +44,7 @@ import org.neo4j.internal.kernel.api.Token;
 import org.neo4j.internal.kernel.api.Write;
 import org.neo4j.internal.kernel.api.exceptions.EntityNotFoundException;
 import org.neo4j.internal.kernel.api.exceptions.KernelException;
+import org.neo4j.internal.kernel.api.exceptions.TransactionFailureException;
 import org.neo4j.internal.kernel.api.exceptions.explicitindex.AutoIndexingKernelException;
 import org.neo4j.internal.kernel.api.exceptions.explicitindex.ExplicitIndexNotFoundKernelException;
 import org.neo4j.internal.kernel.api.exceptions.schema.ConstraintValidationException;
@@ -54,7 +55,6 @@ import org.neo4j.internal.kernel.api.schema.SchemaDescriptor;
 import org.neo4j.internal.kernel.api.schema.constraints.ConstraintDescriptor;
 import org.neo4j.kernel.api.SilentTokenNameLookup;
 import org.neo4j.kernel.api.StatementConstants;
-import org.neo4j.internal.kernel.api.exceptions.TransactionFailureException;
 import org.neo4j.kernel.api.exceptions.index.IndexEntryConflictException;
 import org.neo4j.kernel.api.exceptions.index.IndexNotApplicableKernelException;
 import org.neo4j.kernel.api.exceptions.index.IndexNotFoundKernelException;
@@ -71,6 +71,7 @@ import org.neo4j.kernel.api.exceptions.schema.RepeatedPropertyInCompositeSchemaE
 import org.neo4j.kernel.api.exceptions.schema.UnableToValidateConstraintException;
 import org.neo4j.kernel.api.exceptions.schema.UniquePropertyValueValidationException;
 import org.neo4j.kernel.api.explicitindex.AutoIndexing;
+import org.neo4j.kernel.api.index.IndexProvider;
 import org.neo4j.kernel.api.schema.SchemaDescriptorFactory;
 import org.neo4j.kernel.api.schema.constaints.ConstraintDescriptorFactory;
 import org.neo4j.kernel.api.schema.constaints.IndexBackedConstraintDescriptor;
@@ -81,6 +82,7 @@ import org.neo4j.kernel.api.schema.index.SchemaIndexDescriptorFactory;
 import org.neo4j.kernel.api.txstate.ExplicitIndexTransactionState;
 import org.neo4j.kernel.api.txstate.TransactionState;
 import org.neo4j.kernel.impl.api.KernelTransactionImplementation;
+import org.neo4j.kernel.impl.api.index.IndexProviderMap;
 import org.neo4j.kernel.impl.api.state.ConstraintIndexCreator;
 import org.neo4j.kernel.impl.api.store.DefaultIndexReference;
 import org.neo4j.kernel.impl.constraints.ConstraintSemantics;
@@ -95,8 +97,7 @@ import org.neo4j.values.storable.Values;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static org.neo4j.internal.kernel.api.exceptions.schema.ConstraintValidationException.Phase.VALIDATION;
-import static org.neo4j.internal.kernel.api.exceptions.schema.SchemaKernelException.OperationContext
-        .CONSTRAINT_CREATION;
+import static org.neo4j.internal.kernel.api.exceptions.schema.SchemaKernelException.OperationContext.CONSTRAINT_CREATION;
 import static org.neo4j.internal.kernel.api.schema.SchemaDescriptorPredicates.hasProperty;
 import static org.neo4j.kernel.api.StatementConstants.NO_SUCH_NODE;
 import static org.neo4j.kernel.api.StatementConstants.NO_SUCH_PROPERTY_KEY;
@@ -110,6 +111,9 @@ import static org.neo4j.values.storable.Values.NO_VALUE;
 
 /**
  * Collects all Kernel API operations and guards them from being used outside of transaction.
+ *
+ * Many methods assume cursors to be initialized before use in private methods, even if they're not passed in explicitly.
+ * Keep that in mind: e.g. nodeCursor, propertyCursor and relationshipCursor
  */
 public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
 {
@@ -125,6 +129,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
     private final DefaultCursors cursors;
     private final ConstraintIndexCreator constraintIndexCreator;
     private final ConstraintSemantics constraintSemantics;
+    private final IndexProviderMap indexProviderMap;
 
     public Operations(
             AllStoreHolder allStoreHolder,
@@ -135,7 +140,8 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
             DefaultCursors cursors,
             AutoIndexing autoIndexing,
             ConstraintIndexCreator constraintIndexCreator,
-            ConstraintSemantics constraintSemantics )
+            ConstraintSemantics constraintSemantics,
+            IndexProviderMap indexProviderMap )
     {
         this.token = token;
         this.autoIndexing = autoIndexing;
@@ -146,6 +152,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         this.cursors = cursors;
         this.constraintIndexCreator = constraintIndexCreator;
         this.constraintSemantics = constraintSemantics;
+        this.indexProviderMap = indexProviderMap;
     }
 
     public void initialize()
@@ -185,7 +192,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
                     }
                 }, ktx.statementLocks().optimistic(), ktx.lockTracer() );
 
-        locking.lockAllNodesAndConsumeRelationships( nodeId, ktx, ktx.nodeCursor() );
+        locking.lockAllNodesAndConsumeRelationships( nodeId, ktx, ktx.ambientNodeCursor() );
         ktx.assertOpen();
 
         //we are already holding the lock
@@ -258,7 +265,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         return true;
     }
 
-    public boolean nodeDelete( long node, boolean lock ) throws AutoIndexingKernelException
+    private boolean nodeDelete( long node, boolean lock ) throws AutoIndexingKernelException
     {
         ktx.assertOpen();
 
@@ -281,8 +288,12 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         {
             ktx.statementLocks().optimistic().acquireExclusive( ktx.lockTracer(), ResourceTypes.NODE, node );
         }
-        if ( allStoreHolder.nodeExistsInStore( node ) )
+
+        allStoreHolder.singleNode( node, nodeCursor );
+        if ( nodeCursor.next() )
         {
+            acquireSharedNodeLabelLocks();
+
             autoIndexing.nodes().entityRemoved( this, node );
             ktx.txState().nodeDoDelete( node );
             return true;
@@ -290,6 +301,14 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
 
         // tried to delete node that does not exist
         return false;
+    }
+
+    /**
+     * Assuming that the nodeCursor have been initialized to the node that labels are retrieved from
+     */
+    private void acquireSharedNodeLabelLocks()
+    {
+        ktx.statementLocks().optimistic().acquireShared( ktx.lockTracer(), ResourceTypes.LABEL, nodeCursor.labels().all() );
     }
 
     private boolean relationshipDelete( long relationship, boolean lock ) throws AutoIndexingKernelException
@@ -439,37 +458,35 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
     }
 
     @Override
-    public boolean nodeRemoveLabel( long node, int nodeLabel ) throws EntityNotFoundException
+    public boolean nodeRemoveLabel( long node, int labelId ) throws EntityNotFoundException
     {
         acquireExclusiveNodeLock( node );
         ktx.assertOpen();
 
         singleNode( node );
 
-        if ( !nodeCursor.labels().contains( nodeLabel ) )
+        if ( !nodeCursor.labels().contains( labelId ) )
         {
             //the label wasn't there, nothing to do
             return false;
         }
 
-        ktx.txState().nodeDoRemoveLabel( nodeLabel, node );
-        updater.onLabelChange( nodeLabel, nodeCursor, propertyCursor, REMOVED_LABEL );
+        acquireSharedLabelLock( labelId );
+        ktx.txState().nodeDoRemoveLabel( labelId, node );
+        updater.onLabelChange( labelId, nodeCursor, propertyCursor, REMOVED_LABEL );
         return true;
     }
 
     @Override
     public Value nodeSetProperty( long node, int propertyKey, Value value )
             throws EntityNotFoundException, ConstraintValidationException, AutoIndexingKernelException
-
     {
         acquireExclusiveNodeLock( node );
         ktx.assertOpen();
 
         singleNode( node );
-        ktx.statementLocks().optimistic().acquireShared( ktx.lockTracer(), ResourceTypes.LABEL,
-                nodeCursor.labels().all() );
-        Iterator<ConstraintDescriptor> constraints = Iterators.filter( hasProperty( propertyKey ),
-                allStoreHolder.constraintsGetAll() );
+        acquireSharedNodeLabelLocks();
+        Iterator<ConstraintDescriptor> constraints = allStoreHolder.constraintsGetForProperty( propertyKey );
         Iterator<IndexBackedConstraintDescriptor> uniquenessConstraints =
                 new CastingIterator<>( constraints, IndexBackedConstraintDescriptor.class );
 
@@ -523,6 +540,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
 
         if ( existingValue != NO_VALUE )
         {
+            acquireSharedNodeLabelLocks();
             autoIndexing.nodes().propertyRemoved( this, node, propertyKey );
             ktx.txState().nodeDoRemoveProperty( node, propertyKey );
             updater.onPropertyRemove( nodeCursor, propertyCursor, propertyKey, existingValue );
@@ -859,7 +877,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
     }
 
     @Override
-    public IndexReference indexCreate( SchemaDescriptor descriptor ) throws SchemaKernelException
+    public IndexReference indexCreate( SchemaDescriptor descriptor, String providerName ) throws SchemaKernelException
     {
         acquireExclusiveLabelLock( descriptor.keyId() );
         ktx.assertOpen();
@@ -867,7 +885,8 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         assertIndexDoesNotExist( SchemaKernelException.OperationContext.INDEX_CREATION, descriptor );
 
         SchemaIndexDescriptor indexDescriptor = SchemaIndexDescriptorFactory.forSchema( descriptor );
-        ktx.txState().indexRuleDoAdd( indexDescriptor );
+        IndexProvider.Descriptor providerDescriptor = providerByName( providerName );
+        ktx.txState().indexRuleDoAdd( indexDescriptor, providerDescriptor );
         return DefaultIndexReference.fromDescriptor( indexDescriptor );
     }
 
@@ -904,7 +923,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
     }
 
     @Override
-    public ConstraintDescriptor uniquePropertyConstraintCreate( SchemaDescriptor descriptor )
+    public ConstraintDescriptor uniquePropertyConstraintCreate( SchemaDescriptor descriptor, String providerName )
             throws SchemaKernelException
     {
         //Lock
@@ -919,12 +938,13 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         assertIndexDoesNotExist( SchemaKernelException.OperationContext.CONSTRAINT_CREATION, descriptor );
 
         // Create constraints
-        indexBackedConstraintCreate( constraint );
+        IndexProvider.Descriptor providerDescriptor = providerByName( providerName );
+        indexBackedConstraintCreate( constraint, providerDescriptor );
         return constraint;
     }
 
     @Override
-    public ConstraintDescriptor nodeKeyConstraintCreate( LabelSchemaDescriptor descriptor ) throws SchemaKernelException
+    public ConstraintDescriptor nodeKeyConstraintCreate( LabelSchemaDescriptor descriptor, String providerName ) throws SchemaKernelException
     {
         //Lock
         acquireExclusiveLabelLock( descriptor.getLabelId() );
@@ -945,7 +965,8 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         }
 
         //create constraint
-        indexBackedConstraintCreate( constraint );
+        IndexProvider.Descriptor providerDescriptor = providerByName( providerName );
+        indexBackedConstraintCreate( constraint, providerDescriptor );
         return constraint;
     }
 
@@ -1174,7 +1195,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         return SchemaDescriptorFactory.forLabel( index.label(), index.properties() );
     }
 
-    private void indexBackedConstraintCreate( IndexBackedConstraintDescriptor constraint )
+    private void indexBackedConstraintCreate( IndexBackedConstraintDescriptor constraint, IndexProvider.Descriptor providerDescriptor )
             throws CreateConstraintFailureException
     {
         SchemaDescriptor descriptor = constraint.schema();
@@ -1199,7 +1220,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
                         return;
                     }
                 }
-                long indexId = constraintIndexCreator.createUniquenessConstraintIndex( ktx, descriptor );
+                long indexId = constraintIndexCreator.createUniquenessConstraintIndex( ktx, descriptor, providerDescriptor );
                 if ( !allStoreHolder.constraintExists( constraint ) )
                 {
                     // This looks weird, but since we release the label lock while awaiting population of the index
@@ -1224,5 +1245,10 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         {
             throw new NoSuchIndexException( SchemaDescriptorFactory.forLabel( index.label(), index.properties() ) );
         }
+    }
+
+    private IndexProvider.Descriptor providerByName( String providerName )
+    {
+        return providerName != null ? indexProviderMap.lookup( providerName ).getProviderDescriptor() : null;
     }
 }

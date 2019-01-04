@@ -1,25 +1,29 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.catchup.storecopy;
 
 import java.io.File;
+import java.net.ConnectException;
 import java.nio.file.Paths;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
@@ -121,28 +125,37 @@ public class StoreCopyClient
             TerminationCondition terminationCondition ) throws StoreCopyFailedException
     {
         TimeoutStrategy.Timeout timeout = backOffStrategy.newTimeout();
-        boolean successful;
-        do
+        while ( true )
         {
             try
             {
                 AdvertisedSocketAddress address = addressProvider.secondary();
                 log.info( format( "Sending request '%s' to '%s'", request, address ) );
                 StoreCopyFinishedResponse response = catchUpClient.makeBlockingRequest( address, request, copyHandler );
-                successful = successfulRequest( response, request );
+                if ( successfulRequest( response, request ) )
+                {
+                    break;
+                }
             }
-            catch ( CatchUpClientException | CatchupAddressResolutionException e )
+            catch ( CatchUpClientException e )
             {
-                log.warn( format( "Request failed exceptionally '%s'.", request ), e );
-                successful = false;
+                Throwable cause = e.getCause();
+                if ( cause instanceof ConnectException )
+                {
+                    log.warn( cause.getMessage() );
+                }
+                else
+                {
+                    log.warn( format( "Request failed exceptionally '%s'.", request ), e );
+                }
             }
-            if ( !successful )
+            catch ( CatchupAddressResolutionException e )
             {
-                terminationCondition.assertContinue();
+                log.warn( "Unable to resolve address for '%s'. %s", request, e.getMessage() );
             }
+            terminationCondition.assertContinue();
             awaitAndIncrementTimeout( timeout );
         }
-        while ( !successful );
     }
 
     private void awaitAndIncrementTimeout( TimeoutStrategy.Timeout timeout ) throws StoreCopyFailedException

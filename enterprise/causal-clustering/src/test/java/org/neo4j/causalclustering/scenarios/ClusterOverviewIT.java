@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.scenarios;
 
@@ -29,9 +32,12 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.net.URI;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -41,8 +47,11 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import org.neo4j.causalclustering.core.CausalClusteringSettings;
+import org.neo4j.causalclustering.core.consensus.roles.Role;
 import org.neo4j.causalclustering.discovery.Cluster;
 import org.neo4j.causalclustering.discovery.ClusterMember;
+import org.neo4j.causalclustering.discovery.CoreClusterMember;
+import org.neo4j.causalclustering.discovery.ReadReplica;
 import org.neo4j.causalclustering.discovery.RoleInfo;
 import org.neo4j.causalclustering.discovery.procedures.ClusterOverviewProcedure;
 import org.neo4j.collection.RawIterator;
@@ -54,6 +63,7 @@ import org.neo4j.internal.kernel.api.exceptions.KernelException;
 import org.neo4j.internal.kernel.api.exceptions.ProcedureException;
 import org.neo4j.internal.kernel.api.exceptions.TransactionFailureException;
 import org.neo4j.kernel.api.security.AnonymousContext;
+import org.neo4j.kernel.configuration.Settings;
 import org.neo4j.kernel.impl.factory.GraphDatabaseFacade;
 import org.neo4j.test.causalclustering.ClusterRule;
 
@@ -62,6 +72,7 @@ import static java.util.stream.Collectors.toList;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.not;
 import static org.neo4j.causalclustering.discovery.RoleInfo.FOLLOWER;
 import static org.neo4j.causalclustering.discovery.RoleInfo.LEADER;
 import static org.neo4j.causalclustering.discovery.RoleInfo.READ_REPLICA;
@@ -102,11 +113,8 @@ public class ClusterOverviewIT
                 containsMemberAddresses( cluster.coreMembers() ),
                 containsRole( LEADER, 1 ), containsRole( FOLLOWER, coreMembers - 1 ), doesNotContainRole( READ_REPLICA ) );
 
-        for ( int coreServerId = 0; coreServerId < coreMembers; coreServerId++ )
-        {
-            // then
-            assertEventualOverview( cluster, expected, coreServerId );
-        }
+        // then
+        assertAllEventualOverviews( cluster, expected );
     }
 
     @Test
@@ -125,11 +133,8 @@ public class ClusterOverviewIT
                 containsAllMemberAddresses( cluster.coreMembers(), cluster.readReplicas() ),
                 containsRole( LEADER, 1 ), containsRole( FOLLOWER, 2 ), containsRole( READ_REPLICA, replicaCount ) );
 
-        for ( int coreServerId = 0; coreServerId < coreMembers; coreServerId++ )
-        {
-            // then
-            assertEventualOverview( cluster, expected, coreServerId );
-        }
+        // then
+        assertAllEventualOverviews( cluster, expected );
     }
 
     @Test
@@ -150,11 +155,8 @@ public class ClusterOverviewIT
                 containsAllMemberAddresses( cluster.coreMembers(), cluster.readReplicas() ),
                 containsRole( LEADER, 1 ), containsRole( FOLLOWER, coreMembers - 1 ), containsRole( READ_REPLICA, readReplicas ) );
 
-        for ( int coreServerId = 0; coreServerId < coreMembers; coreServerId++ )
-        {
-            // then
-            assertEventualOverview( cluster, expected, coreServerId );
-        }
+        // then
+        assertAllEventualOverviews( cluster, expected );
     }
 
     @Test
@@ -176,11 +178,8 @@ public class ClusterOverviewIT
                 containsMemberAddresses( cluster.coreMembers() ),
                 containsRole( LEADER, 1 ), containsRole( FOLLOWER, finalCoreMembers - 1 ) );
 
-        for ( int coreServerId = 0; coreServerId < finalCoreMembers; coreServerId++ )
-        {
-            // then
-            assertEventualOverview( cluster, expected, coreServerId );
-        }
+        // then
+        assertAllEventualOverviews( cluster, expected );
     }
 
     @Test
@@ -204,11 +203,8 @@ public class ClusterOverviewIT
                 containsRole( FOLLOWER, coreMembers - 1 ),
                 containsRole( READ_REPLICA, initialReadReplicas + 2 ) );
 
-        for ( int coreServerId = 0; coreServerId < coreMembers; coreServerId++ )
-        {
-            // then
-            assertEventualOverview( cluster, expected, coreServerId );
-        }
+        // then
+        assertAllEventualOverviews( cluster, expected );
     }
 
     @Test
@@ -222,20 +218,14 @@ public class ClusterOverviewIT
 
         Cluster cluster = clusterRule.startCluster();
 
-        for ( int coreServerId = 0; coreServerId < coreMembers; coreServerId++ )
-        {
-            assertEventualOverview( cluster, containsRole( READ_REPLICA, initialReadReplicas ), coreServerId );
-        }
+        assertAllEventualOverviews( cluster, containsRole( READ_REPLICA, initialReadReplicas ) );
 
         // when
         cluster.removeReadReplicaWithMemberId( 0 );
         cluster.removeReadReplicaWithMemberId( 1 );
 
-        for ( int coreServerId = 0; coreServerId < coreMembers; coreServerId++ )
-        {
-            // then
-            assertEventualOverview( cluster, containsRole( READ_REPLICA, initialReadReplicas - 2 ), coreServerId );
-        }
+        // then
+        assertAllEventualOverviews( cluster, containsRole( READ_REPLICA, initialReadReplicas - 2 ) );
     }
 
     @Test
@@ -248,31 +238,87 @@ public class ClusterOverviewIT
 
         Cluster cluster = clusterRule.startCluster();
 
-        for ( int coreServerId = 0; coreServerId < coreMembers; coreServerId++ )
-        {
-            assertEventualOverview( cluster, allOf( containsRole( LEADER, 1 ), containsRole( FOLLOWER, coreMembers - 1 ) ),
-                    coreServerId );
-        }
+        assertAllEventualOverviews( cluster, allOf( containsRole( LEADER, 1 ), containsRole( FOLLOWER, coreMembers - 1 ) ) );
 
         // when
         cluster.removeCoreMemberWithServerId( 0 );
         cluster.removeCoreMemberWithServerId( 1 );
 
-        for ( int coreServerId = 2; coreServerId < coreMembers; coreServerId++ )
+        // then
+        assertAllEventualOverviews( cluster, allOf( containsRole( LEADER, 1 ), containsRole( FOLLOWER, coreMembers - 1 - 2 ) ),
+                asSet( 0, 1 ), Collections.emptySet() );
+    }
+
+    @Test
+    public void shouldDiscoverTimeoutBasedLeaderStepdown() throws Exception
+    {
+        clusterRule.withNumberOfCoreMembers( 3 );
+        clusterRule.withNumberOfReadReplicas( 2 );
+
+        Cluster cluster = clusterRule.startCluster();
+        List<CoreClusterMember> followers = cluster.getAllMembersWithRole( Role.FOLLOWER );
+        CoreClusterMember leader = cluster.getMemberWithRole( Role.LEADER );
+        followers.forEach( CoreClusterMember::shutdown );
+
+        assertEventualOverview( containsRole( LEADER, 0 ), leader, "core" );
+    }
+
+    @Test
+    public void shouldDiscoverGreaterTermBasedLeaderStepdown() throws Exception
+    {
+        int originalCoreMembers = 3;
+        clusterRule.withNumberOfCoreMembers( originalCoreMembers );
+
+        Cluster cluster = clusterRule.startCluster();
+        CoreClusterMember leader = cluster.awaitLeader();
+        leader.config().augment( CausalClusteringSettings.refuse_to_be_leader, Settings.TRUE );
+
+        List<MemberInfo> preElectionOverview = clusterOverview( leader.database() );
+
+        CoreClusterMember follower = cluster.getMemberWithRole( Role.FOLLOWER );
+        follower.raft().triggerElection( Clock.systemUTC() );
+
+        assertEventualOverview( allOf(
+                containsRole( LEADER, 1 ),
+                containsRole( FOLLOWER, originalCoreMembers - 1 ),
+                not( equalTo( preElectionOverview ) ) ), leader, "core" );
+    }
+
+    private void assertAllEventualOverviews( Cluster cluster, Matcher<List<MemberInfo>> expected ) throws KernelException, InterruptedException
+    {
+        assertAllEventualOverviews( cluster, expected, Collections.emptySet(), Collections.emptySet()  );
+    }
+
+    private void assertAllEventualOverviews( Cluster cluster, Matcher<List<MemberInfo>> expected, Set<Integer> excludedCores, Set<Integer> excludedRRs )
+            throws KernelException, InterruptedException
+    {
+        for ( CoreClusterMember core : cluster.coreMembers() )
         {
-            // then
-            assertEventualOverview( cluster, allOf( containsRole( LEADER, 1 ), containsRole( FOLLOWER, coreMembers - 1 - 2 ) ),
-                    coreServerId );
+            if ( !excludedCores.contains( core.serverId() ) )
+            {
+                assertEventualOverview( expected, core, "core" );
+            }
+
+        }
+
+        for ( ReadReplica rr : cluster.readReplicas() )
+        {
+            if ( !excludedRRs.contains( rr.serverId() ) )
+            {
+                assertEventualOverview( expected, rr, "rr" );
+            }
         }
     }
 
-    private void assertEventualOverview( Cluster cluster, Matcher<List<MemberInfo>> expected, int coreServerId )
+    private void assertEventualOverview( Matcher<List<MemberInfo>> expected, ClusterMember<? extends GraphDatabaseFacade> member, String role )
             throws KernelException, InterruptedException
     {
         Function<List<MemberInfo>, String> printableMemberInfos =
                 memberInfos -> memberInfos.stream().map( MemberInfo::toString ).collect( Collectors.joining( ", " ) );
-        assertEventually( memberInfos -> "should have overview from core " + coreServerId + " but view was " + printableMemberInfos.apply( memberInfos ),
-                () -> clusterOverview( cluster.getCoreMemberById( coreServerId ).database() ), expected, 60, SECONDS );
+
+        String message = String.format( "should have overview from %s %s, but view was ", role, member.serverId() );
+        assertEventually( memberInfos -> message + printableMemberInfos.apply( memberInfos ),
+                () -> clusterOverview( member.database() ), expected, 90, SECONDS );
     }
 
     @SafeVarargs

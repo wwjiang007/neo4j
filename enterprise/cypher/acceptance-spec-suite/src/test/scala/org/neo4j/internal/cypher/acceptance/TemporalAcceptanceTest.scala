@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -47,6 +50,20 @@ class TemporalAcceptanceTest extends ExecutionEngineFunSuite with QueryStatistic
     }
     shouldReturnSomething("datetime({epochMillis:timestamp()})")
     shouldReturnSomething("datetime({epochSeconds:timestamp() / 1000})")
+  }
+
+  test("should find case insensitive names for built in functions") {
+    for (s <- Seq("dAtE", "lOcAlTiMe", "TiMe", "lOcAlDaTeTiMe", "DaTeTiMe")) {
+      shouldReturnSomething(s"$s()")
+      shouldReturnSomething(s"$s.traNsaction()")
+      shouldReturnSomething(s"$s.staTement()")
+      shouldReturnSomething(s"$s.reaLtime()")
+      shouldReturnSomething(s"$s.traNsaction('America/Los_Angeles')")
+      shouldReturnSomething(s"$s.staTEment('America/Los_Angeles')")
+      shouldReturnSomething(s"$s.reaLTime('America/Los_Angeles')")
+    }
+    shouldReturnSomething("DateTime({epochMillis:timestamp()})")
+    shouldReturnSomething("DateTime({epochSeconds:timestamp() / 1000})")
   }
 
   // Should handle temporal and duration as parameters, also with compiled
@@ -352,11 +369,78 @@ class TemporalAcceptanceTest extends ExecutionEngineFunSuite with QueryStatistic
     shouldNotConstructWithArg("datetime", queries)
   }
 
-  test("should not create date time with conflicting time zones")
-  {
+  test("should not create date time with conflicting time zones") {
     val query = "WITH datetime('1984-07-07T12:34+03:00[Europe/Stockholm]') as d RETURN d"
     val errorMsg = "Timezone and offset do not match"
     failWithError(Configs.Interpreted - Configs.Version2_3 + Configs.Procs, query, Seq(errorMsg), Seq("InvalidArgumentException"))
+  }
+
+  // Failing when providing wrong values
+
+  test("should not create date with out of bounds values") {
+    shouldNotConstructWithArg("date", Seq(
+      "{year: 1000000000000, month: 1, day: 1}",
+      "{year: 1, month: -1, day: 1}",
+      "{year: 1, month: 1, day: -1}",
+      "{year: 1, week: -1, dayOfWeek: 1}",
+      "{year: 1, week: 1, dayOfWeek: -1}"
+    ))
+  }
+
+  test("should not create local time with out of bounds values") {
+    shouldNotConstructWithArg("localtime", Seq(
+      "{hour: -1, minute: 1, second: 1, nanosecond: 1}",
+      "{hour: 1, minute: -1, second: 1, nanosecond: 1}",
+      "{hour: 1, minute: 1, second: -1, nanosecond: 1}",
+      "{hour: 1, minute: 1, second: 1, millisecond: -1}",
+      "{hour: 1, minute: 1, second: 1, microsecond: -1}",
+      "{hour: 1, minute: 1, second: 1, nanosecond: -1}"
+    ))
+  }
+
+  test("should not create time with out of bounds values") {
+    shouldNotConstructWithArg("time", Seq(
+      "{hour: -1, minute: 1, second: 1, nanosecond: 1}",
+      "{hour: 1, minute: -1, second: 1, nanosecond: 1}",
+      "{hour: 1, minute: 1, second: -1, nanosecond: 1}",
+      "{hour: 1, minute: 1, second: 1, millisecond: -1}",
+      "{hour: 1, minute: 1, second: 1, microsecond: -1}",
+      "{hour: 1, minute: 1, second: 1, nanosecond: -1}",
+      "{hour: 1, minute: 1, second: 1, nanosecond: 1, timezone: '+20:00'}"
+    ))
+  }
+
+  test("should not create local date time with out of bounds values") {
+    shouldNotConstructWithArg("localdatetime", Seq(
+      "{year: 1000000000000, month: 1, day: 1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, month: -1, day: 1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, month: 1, day: -1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, week: -1, dayOfWeek: 1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, week: 1, dayOfWeek: -1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, month: 1, day: 1, hour: -1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: -1, second: 1, nanosecond: 1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: -1, nanosecond: 1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: 1, millisecond: -1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: 1, microsecond: -1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: 1, nanosecond: -1}"
+    ))
+  }
+
+  test("should not create date time with out of bounds values") {
+    shouldNotConstructWithArg("datetime", Seq(
+      "{year: 1000000000000, month: 1, day: 1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, month: -1, day: 1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, month: 1, day: -1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, week: -1, dayOfWeek: 1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, week: 1, dayOfWeek: -1, hour: 1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, month: 1, day: 1, hour: -1, minute: 1, second: 1, nanosecond: 1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: -1, second: 1, nanosecond: 1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: -1, nanosecond: 1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: 1, millisecond: -1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: 1, microsecond: -1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: 1, nanosecond: -1}",
+      "{year: 1, month: 1, day: 1, hour: 1, minute: 1, second: 1, nanosecond: 1, timezone: '+20:00'}"
+    ))
   }
 
   // Failing when selecting a wrong group
@@ -687,6 +771,15 @@ class TemporalAcceptanceTest extends ExecutionEngineFunSuite with QueryStatistic
     }
   }
 
+  test("should not allow invalid time fields") {
+    for (arg <- Seq("2018-04-01T12:45:45+45", "2018-04-01T12:45:65+05", "2018-04-01T12:65:45+05", "2018-04-01T65:45:45+05", "2018-04-65T12:45:45+05", "2018-65-01T12:45:45+05")) {
+      val query = s"RETURN datetime('$arg') as value"
+      withClue(s"Executing $query") {
+        failWithError(failConf2, query, Seq("Invalid value for", "not in valid range"))
+      }
+    }
+  }
+
   // Accessors
 
   test("should not provide undefined accessors for date") {
@@ -768,6 +861,23 @@ class TemporalAcceptanceTest extends ExecutionEngineFunSuite with QueryStatistic
       withClue(s"Executing $query") {
         failWithError(Configs.AbsolutelyAll - Configs.Version2_3, query,
           Seq("Function call does not provide the required number of arguments"))
+      }
+    }
+  }
+
+  test("should not accept wrong argument types") {
+    graph.execute("CREATE ({str: 'a', num: 5, b: true})")
+    val returnQueries = Seq(
+      "duration.between(n.str,n.str)",
+      "date(n.num)",
+      "date.transaction(n.num)",
+      "duration(n.num)",
+      "datetime.fromEpoch(n.b, n.b)",
+      "datetime.fromEpochMillis(n.b)"
+    )
+    for(returnQuery <- returnQueries) {
+      withClue("executing " + returnQuery) {
+        failWithError(failConf2, "MATCH (n) RETURN " + returnQuery, Seq("Invalid call signature", "Can't coerce"), Seq("CypherExecutionException", "CypherTypeException"))
       }
     }
   }
@@ -865,9 +975,9 @@ class TemporalAcceptanceTest extends ExecutionEngineFunSuite with QueryStatistic
   private def shouldNotConstructWithArg(func: String, args: Seq[String]): Unit = {
     for (arg <- args) {
       val query = s"RETURN $func($arg)"
-      val validErrorMessages = Seq("Cannot assign", "cannot be selected together with", "cannot be specified without", "must be specified")
+      val validErrorMessages = Seq("Cannot assign", "cannot be selected together with", "cannot be specified without", "must be specified", "Invalid value")
       withClue(s"Executing $query") {
-        failWithError(failConf2, query, validErrorMessages, Seq("CypherTypeException", "InvalidArgumentException"))
+        failWithError(failConf2, query, validErrorMessages, Seq("CypherTypeException", "InvalidArgumentException", "SyntaxException"))
       }
     }
   }

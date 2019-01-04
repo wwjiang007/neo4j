@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.server.security.enterprise.auth;
 
@@ -42,6 +45,7 @@ import org.neo4j.internal.kernel.api.security.AuthenticationResult;
 import org.neo4j.kernel.api.exceptions.InvalidArgumentsException;
 import org.neo4j.kernel.api.security.PasswordPolicy;
 import org.neo4j.kernel.api.security.exception.InvalidAuthTokenException;
+import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.enterprise.api.security.EnterpriseLoginContext;
 import org.neo4j.kernel.impl.security.Credential;
 import org.neo4j.kernel.impl.security.User;
@@ -54,7 +58,6 @@ import org.neo4j.server.security.auth.RateLimitedAuthenticationStrategy;
 import org.neo4j.server.security.auth.UserRepository;
 import org.neo4j.server.security.enterprise.auth.plugin.api.PredefinedRoles;
 import org.neo4j.server.security.enterprise.log.SecurityLog;
-import org.neo4j.time.Clocks;
 
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.equalTo;
@@ -86,7 +89,7 @@ public class InternalFlatFileRealmTest
                         new InMemoryUserRepository(),
                         new InMemoryRoleRepository(),
                         new BasicPasswordPolicy(),
-                        new RateLimitedAuthenticationStrategy( Clock.systemUTC(), 3 ),
+                        newRateLimitedAuthStrategy(),
                         mock( JobScheduler.class ),
                         new InMemoryUserRepository(),
                         new InMemoryUserRepository()
@@ -260,7 +263,7 @@ public class InternalFlatFileRealmTest
                 userRepository,
                 roleRepository,
                 new BasicPasswordPolicy(),
-                new RateLimitedAuthenticationStrategy( Clocks.systemClock(), 3 ),
+                newRateLimitedAuthStrategy(),
                 new InternalFlatFileRealmIT.TestJobScheduler(),
                 initialUserRepository,
                 adminUserRepository
@@ -303,7 +306,7 @@ public class InternalFlatFileRealmTest
                 userRepository,
                 roleRepository,
                 new BasicPasswordPolicy(),
-                new RateLimitedAuthenticationStrategy( Clocks.systemClock(), 3 ),
+                newRateLimitedAuthStrategy(),
                 new InternalFlatFileRealmIT.TestJobScheduler(),
                 initialUserRepository,
                 adminUserRepository
@@ -324,7 +327,7 @@ public class InternalFlatFileRealmTest
         final UserRepository initialUserRepository = mock( UserRepository.class );
         final UserRepository defaultAdminRepository = mock( UserRepository.class );
         final PasswordPolicy passwordPolicy = new BasicPasswordPolicy();
-        AuthenticationStrategy authenticationStrategy = new RateLimitedAuthenticationStrategy( Clocks.systemClock(), 3 );
+        AuthenticationStrategy authenticationStrategy = newRateLimitedAuthStrategy();
         InternalFlatFileRealmIT.TestJobScheduler jobScheduler = new InternalFlatFileRealmIT.TestJobScheduler();
         InternalFlatFileRealm realm =
                 new InternalFlatFileRealm(
@@ -351,6 +354,11 @@ public class InternalFlatFileRealmTest
 
         verify( userRepository, times( nSetUsers ) ).setUsers( any() );
         verify( roleRepository, times( nSetRoles ) ).setRoles( any() );
+    }
+
+    private static AuthenticationStrategy newRateLimitedAuthStrategy()
+    {
+        return new RateLimitedAuthenticationStrategy( Clock.systemUTC(), Config.defaults() );
     }
 
     private class TestRealm extends InternalFlatFileRealm

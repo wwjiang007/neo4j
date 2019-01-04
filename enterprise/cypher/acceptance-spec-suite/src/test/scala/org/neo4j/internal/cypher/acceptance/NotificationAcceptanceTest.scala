@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -36,7 +39,7 @@ import scala.collection.JavaConverters._
 
 class NotificationAcceptanceTest extends ExecutionEngineFunSuite with CypherComparisonSupport {
 
-  // Need to override so that grpah.execute will not throw an exception
+  // Need to override so that graph.execute will not throw an exception
   override def databaseConfig(): collection.Map[Setting[_], String] = super.databaseConfig() ++ Map(
     GraphDatabaseSettings.cypher_hints_error -> "false",
     GraphDatabaseSettings.query_non_indexed_label_warning_threshold -> "10"
@@ -649,6 +652,88 @@ class NotificationAcceptanceTest extends ExecutionEngineFunSuite with CypherComp
     val result = innerExecuteDeprecated(query, Map.empty)
     val notifications = result.notifications
     notifications should contain(RUNTIME_UNSUPPORTED.notification(new graphdb.InputPosition(61,1,62)))
+  }
+
+  test("should warn when using contains on an index with SLOW_CONTAINS limitation") {
+    graph.createIndex("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name CONTAINS 'er' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should contain(SUBOPTIMAL_INDEX_FOR_CONTAINS_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name")))
+  }
+
+  test("should warn when using ends with on an index with SLOW_CONTAINS limitation") {
+    graph.createIndex("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name ENDS WITH 'son' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should contain(SUBOPTIMAL_INDEX_FOR_ENDS_WITH_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name")))
+  }
+
+  test("should warn when using contains on a unique index with SLOW_CONTAINS limitation") {
+    graph.createConstraint("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name CONTAINS 'er' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should contain(SUBOPTIMAL_INDEX_FOR_CONTAINS_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name")))
+  }
+
+  test("should warn when using ends with on a unique index with SLOW_CONTAINS limitation") {
+    graph.createConstraint("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name ENDS WITH 'son' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should contain(SUBOPTIMAL_INDEX_FOR_ENDS_WITH_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name")))
+  }
+
+  test("should not warn when using starts with on an index with SLOW_CONTAINS limitation") {
+    graph.createIndex("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name STARTS WITH 'er' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should not contain SUBOPTIMAL_INDEX_FOR_CONTAINS_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name"))
+    result.notifications should not contain SUBOPTIMAL_INDEX_FOR_ENDS_WITH_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name"))
+  }
+
+  test("should not warn when using starts with on a unqiue index with SLOW_CONTAINS limitation") {
+    graph.createConstraint("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name STARTS WITH 'er' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should not contain SUBOPTIMAL_INDEX_FOR_CONTAINS_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name"))
+    result.notifications should not contain SUBOPTIMAL_INDEX_FOR_ENDS_WITH_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name"))
+  }
+}
+
+class LuceneIndexNotificationAcceptanceTest extends ExecutionEngineFunSuite with CypherComparisonSupport {
+
+  // Need to override so that graph.execute will not throw an exception
+  override def databaseConfig(): collection.Map[Setting[_], String] = super.databaseConfig() ++ Map(
+    GraphDatabaseSettings.cypher_hints_error -> "false",
+    GraphDatabaseSettings.query_non_indexed_label_warning_threshold -> "10",
+    GraphDatabaseSettings.default_schema_provider -> "lucene-1.0"
+  )
+
+  test("should not warn when using contains on an index with no limitations") {
+    graph.createIndex("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name CONTAINS 'er' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should not contain SUBOPTIMAL_INDEX_FOR_CONTAINS_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name"))
+  }
+
+  test("should not warn when using ends with on an index with no limitations") {
+    graph.createIndex("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name ENDS WITH 'son' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should not contain SUBOPTIMAL_INDEX_FOR_ENDS_WITH_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name"))
+  }
+
+  test("should not warn when using contains on a unique index with no limitations") {
+    graph.createConstraint("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name CONTAINS 'er' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should not contain SUBOPTIMAL_INDEX_FOR_CONTAINS_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name"))
+  }
+
+  test("should not warn when using ends with on a unique index with no limitations") {
+    graph.createConstraint("Person", "name")
+    val query = "EXPLAIN MATCH (a:Person) WHERE a.name ENDS WITH 'son' RETURN a"
+    val result = innerExecuteDeprecated(query, Map.empty)
+    result.notifications should not contain SUBOPTIMAL_INDEX_FOR_ENDS_WITH_QUERY.notification(graphdb.InputPosition.empty, suboptimalIndex("Person", "name"))
   }
 }
 

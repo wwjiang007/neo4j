@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.catchup.tx;
 
@@ -86,48 +89,58 @@ public class TxPullRequestHandler extends SimpleChannelInboundHandler<TxPullRequ
         StoreId expectedStoreId = msg.expectedStoreId();
 
         long firstTxId = msg.previousTxId() + 1;
-        IOCursor<CommittedTransactionRepresentation> txCursor = getCursor( ctx, firstTxId, localStoreId, expectedStoreId );
+
+        /*
+         * This is the minimum transaction id we must send to consider our streaming operation successful. The kernel can
+         * concurrently prune even future transactions while iterating and the cursor will silently fail on iteration, so
+         * we need to add our own protection for this reason and also as a generally important sanity check for the fulfillment
+         * of the consistent recovery contract which requires us to stream transactions at least as far as the time when the
+         * file copy operation completed.
+         */
+        long txIdPromise = transactionIdStore.getLastCommittedTransactionId();
+        IOCursor<CommittedTransactionRepresentation> txCursor = getCursor( txIdPromise, ctx, firstTxId, localStoreId, expectedStoreId );
 
         if ( txCursor != null )
         {
-            ChunkedTransactionStream txStream = new ChunkedTransactionStream( localStoreId, firstTxId, txCursor, protocol );
+            ChunkedTransactionStream txStream = new ChunkedTransactionStream( log, localStoreId, firstTxId, txIdPromise, txCursor, protocol );
             // chunked transaction stream ends the interaction internally and closes the cursor
             ctx.writeAndFlush( txStream ).addListener( f ->
             {
-                String message = format( "Streamed transactions [%d--%d] to %s", firstTxId, txStream.lastTxId(), ctx.channel().remoteAddress() );
-                if ( f.isSuccess() )
+                if ( log.isDebugEnabled() || !f.isSuccess() )
                 {
-                    log.info( message );
-                }
-                else
-                {
-                    log.warn( message, f.cause() );
+                    String message = format( "Streamed transactions [%d--%d] to %s", firstTxId, txStream.lastTxId(), ctx.channel().remoteAddress() );
+                    if ( f.isSuccess() )
+                    {
+                        log.debug( message );
+                    }
+                    else
+                    {
+                        log.warn( message, f.cause() );
+                    }
                 }
             } );
         }
     }
 
-    private IOCursor<CommittedTransactionRepresentation> getCursor( ChannelHandlerContext ctx, long firstTxId,
+    private IOCursor<CommittedTransactionRepresentation> getCursor( long txIdPromise, ChannelHandlerContext ctx, long firstTxId,
             StoreId localStoreId, StoreId expectedStoreId ) throws IOException
     {
-        long lastCommittedTransactionId = transactionIdStore.getLastCommittedTransactionId();
-
         if ( localStoreId == null || !localStoreId.equals( expectedStoreId ) )
         {
             log.info( "Failed to serve TxPullRequest for tx %d and storeId %s because that storeId is different " +
                     "from this machine with %s", firstTxId, expectedStoreId, localStoreId );
-            endInteraction( ctx, E_STORE_ID_MISMATCH, lastCommittedTransactionId );
+            endInteraction( ctx, E_STORE_ID_MISMATCH, txIdPromise );
             return null;
         }
         else if ( !databaseAvailable.getAsBoolean() )
         {
             log.info( "Failed to serve TxPullRequest for tx %d because the local database is unavailable.", firstTxId );
-            endInteraction( ctx, E_STORE_UNAVAILABLE, lastCommittedTransactionId );
+            endInteraction( ctx, E_STORE_UNAVAILABLE, txIdPromise );
             return null;
         }
-        else if ( lastCommittedTransactionId < firstTxId )
+        else if ( txIdPromise < firstTxId )
         {
-            endInteraction( ctx, SUCCESS_END_OF_STREAM, lastCommittedTransactionId );
+            endInteraction( ctx, SUCCESS_END_OF_STREAM, txIdPromise );
             return null;
         }
 
@@ -138,7 +151,7 @@ public class TxPullRequestHandler extends SimpleChannelInboundHandler<TxPullRequ
         catch ( NoSuchTransactionException e )
         {
             log.info( "Failed to serve TxPullRequest for tx %d because the transaction does not exist.", firstTxId );
-            endInteraction( ctx, E_TRANSACTION_PRUNED, lastCommittedTransactionId );
+            endInteraction( ctx, E_TRANSACTION_PRUNED, txIdPromise );
             return null;
         }
     }

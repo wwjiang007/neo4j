@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -26,7 +29,7 @@ import java.util.Collections.emptyMap
 
 import org.neo4j.cypher._
 import org.neo4j.cypher.internal.frontend.v3_4.helpers.StringHelper.RichString
-import org.neo4j.cypher.internal.runtime.CreateTempFileTestSupport
+import org.neo4j.cypher.internal.runtime.{CreateTempFileTestSupport, InternalExecutionResult}
 import org.neo4j.cypher.internal.v3_4.logical.plans.NodeIndexSeek
 import org.neo4j.graphdb.QueryExecutionException
 import org.neo4j.graphdb.config.Configuration
@@ -40,7 +43,7 @@ import scala.collection.JavaConverters._
 
 class LoadCsvAcceptanceTest
   extends ExecutionEngineFunSuite with BeforeAndAfterAll
-  with QueryStatisticsTestSupport with CreateTempFileTestSupport with CypherComparisonSupport{
+  with QueryStatisticsTestSupport with CreateTempFileTestSupport with CypherComparisonSupport with RunWithConfigTestSupport {
 
   val expectedToFail = Configs.AbsolutelyAll - Configs.Compiled - Configs.Cost2_3
 
@@ -371,6 +374,27 @@ class LoadCsvAcceptanceTest
     }
   }
 
+  test("should handle returning null keys") {
+    val urls = csvUrls({
+      writer =>
+        writer.println("DEPARTMENT ID;DEPARTMENT NAME;")
+        writer.println("010-1010;MFG Supplies;")
+        writer.println("010-1011;Corporate Procurement;")
+        writer.println("010-1015;MFG - Engineering HQ;")
+    })
+
+    for (url <- urls) {
+      //Using innerExecuteDeprecated because different versions has different ordering for keys
+      val result =  innerExecuteDeprecated(s"LOAD CSV WITH HEADERS FROM '$url' AS line FIELDTERMINATOR ';' RETURN keys(line)").toList
+
+      assert(result === List(
+        Map("keys(line)" -> List("DEPARTMENT NAME", null, "DEPARTMENT ID")),
+        Map("keys(line)" -> List("DEPARTMENT NAME", null, "DEPARTMENT ID")),
+        Map("keys(line)" -> List("DEPARTMENT NAME", null, "DEPARTMENT ID"))
+      ))
+    }
+  }
+
   test("should fail gracefully when loading missing file") {
       failWithError(expectedToFail, "LOAD CSV FROM 'file:///./these_are_not_the_droids_you_are_looking_for.csv' AS line CREATE (a {name:line[0]})",
         List("Couldn't load the external resource at: file:/./these_are_not_the_droids_you_are_looking_for.csv"))
@@ -592,6 +616,42 @@ class LoadCsvAcceptanceTest
       )
 
       result.toList should equal(List(Map("count(*)" -> 0)))
+    }
+  }
+
+  test("should give nice error message when overflowing the buffer") {
+    runWithConfig(GraphDatabaseSettings.csv_buffer_size -> (1 * 1024 * 1024).toString) { db =>
+      val longName  = "f"* 6000000
+      val urls = csvUrls({
+        writer =>
+          writer.println("\"prop\"")
+          writer.println(longName)
+      })
+      for (url <- urls) {
+        //TODO this message should mention `dbms.import.csv.buffer_size` in 3.5
+        val error = intercept[QueryExecutionException](db.execute(
+          s"""LOAD CSV WITH HEADERS FROM '$url' AS row
+             |RETURN row.prop""".stripMargin).next().get("row.prop"))
+        error.getMessage should startWith(
+          """Tried to read a field larger than buffer size 1048576.""".stripMargin)
+      }
+    }
+  }
+
+  test("should be able to configure db to handle huge fields") {
+    runWithConfig(GraphDatabaseSettings.csv_buffer_size -> (4 * 1024 * 1024).toString) { db =>
+      val longName  = "f"* 6000000
+      val urls = csvUrls({
+        writer =>
+          writer.println("\"prop\"")
+          writer.println(longName)
+      })
+      for (url <- urls) {
+        val result = db.execute(
+          s"""LOAD CSV WITH HEADERS FROM '$url' AS row
+             |RETURN row.prop""".stripMargin)
+        result.next().get("row.prop") should equal(longName)
+      }
     }
   }
 

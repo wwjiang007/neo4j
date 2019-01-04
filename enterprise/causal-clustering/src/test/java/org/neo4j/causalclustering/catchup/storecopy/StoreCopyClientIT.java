@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.catchup.storecopy;
 
@@ -40,18 +43,21 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.neo4j.causalclustering.catchup.CatchUpClient;
 import org.neo4j.causalclustering.catchup.CatchupAddressProvider;
+import org.neo4j.causalclustering.catchup.CatchupAddressResolutionException;
 import org.neo4j.causalclustering.catchup.CatchupClientBuilder;
 import org.neo4j.causalclustering.catchup.CatchupServerBuilder;
 import org.neo4j.causalclustering.catchup.CatchupServerProtocol;
 import org.neo4j.causalclustering.catchup.ResponseMessageType;
+import org.neo4j.causalclustering.helper.ConstantTimeTimeoutStrategy;
+import org.neo4j.causalclustering.identity.MemberId;
 import org.neo4j.causalclustering.identity.StoreId;
 import org.neo4j.causalclustering.net.Server;
 import org.neo4j.collection.primitive.base.Empty;
-import org.neo4j.causalclustering.helper.ConstantTimeTimeoutStrategy;
 import org.neo4j.helpers.AdvertisedSocketAddress;
 import org.neo4j.helpers.ListenSocketAddress;
 import org.neo4j.helpers.collection.Iterators;
@@ -62,20 +68,28 @@ import org.neo4j.io.pagecache.PageCache;
 import org.neo4j.io.pagecache.PagedFile;
 import org.neo4j.io.pagecache.impl.muninn.StandalonePageCacheFactory;
 import org.neo4j.kernel.monitoring.Monitors;
+import org.neo4j.logging.AssertableLogProvider;
+import org.neo4j.logging.DuplicatingLogProvider;
 import org.neo4j.logging.FormattedLogProvider;
 import org.neo4j.logging.Level;
 import org.neo4j.logging.LogProvider;
 import org.neo4j.ports.allocation.PortAuthority;
 import org.neo4j.test.rule.TestDirectory;
 
+import static org.hamcrest.CoreMatchers.both;
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.startsWith;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 public class StoreCopyClientIT
 {
     private FileSystemAbstraction fsa = new DefaultFileSystemAbstraction();
-    private final LogProvider logProvider = FormattedLogProvider.withDefaultLogLevel( Level.DEBUG ).toOutputStream( System.out );
+    private final AssertableLogProvider assertableLogProvider = new AssertableLogProvider( true );
+    private final LogProvider logProvider =
+            new DuplicatingLogProvider( assertableLogProvider, FormattedLogProvider.withDefaultLogLevel( Level.DEBUG ).toOutputStream( System.out ) );
     private final TerminationCondition defaultTerminationCondition = TerminationCondition.CONTINUE_INDEFINITELY;
 
     @Rule
@@ -104,7 +118,7 @@ public class StoreCopyClientIT
     }
 
     @Before
-    public void setup()
+    public void setup() throws Throwable
     {
         serverHandler = new TestCatchupServerHandler( logProvider, testDirectory, fsa );
         serverHandler.addFile( fileA );
@@ -128,7 +142,7 @@ public class StoreCopyClientIT
     }
 
     @After
-    public void shutdown()
+    public void shutdown() throws Throwable
     {
         catchupServer.stop();
     }
@@ -298,6 +312,67 @@ public class StoreCopyClientIT
         }
     }
 
+    @Test
+    public void shouldLogConnetionRefusedMessage()
+    {
+        InMemoryStoreStreamProvider clientStoreFileStream = new InMemoryStoreStreamProvider();
+        int port = PortAuthority.allocatePort();
+        try
+        {
+            subject.copyStoreFiles( new CatchupAddressProvider()
+            {
+                @Override
+                public AdvertisedSocketAddress primary()
+                {
+                    return from( catchupServer.address().getPort() );
+                }
+
+                @Override
+                public AdvertisedSocketAddress secondary()
+                {
+
+                    return new AdvertisedSocketAddress( "localhost", port );
+                }
+            }, serverHandler.getStoreId(), clientStoreFileStream, Once::new, targetLocation );
+            fail();
+        }
+        catch ( StoreCopyFailedException e )
+        {
+            assertableLogProvider.assertContainsExactlyOneMessageMatching(
+                    both( startsWith( "Connection refused:" ) ).and( containsString( "localhost/127.0.0.1:" + port ) ) );
+        }
+    }
+
+    @Test
+    public void shouldLogUpstreamIssueMessage()
+    {
+        InMemoryStoreStreamProvider clientStoreFileStream = new InMemoryStoreStreamProvider();
+        CatchupAddressResolutionException catchupAddressResolutionException = new CatchupAddressResolutionException( new MemberId( UUID.randomUUID() ) );
+        try
+        {
+            subject.copyStoreFiles( new CatchupAddressProvider()
+            {
+                @Override
+                public AdvertisedSocketAddress primary()
+                {
+                    return from( catchupServer.address().getPort() );
+                }
+
+                @Override
+                public AdvertisedSocketAddress secondary() throws CatchupAddressResolutionException
+                {
+                    throw catchupAddressResolutionException;
+                }
+            }, serverHandler.getStoreId(), clientStoreFileStream, Once::new, targetLocation );
+            fail();
+        }
+        catch ( StoreCopyFailedException e )
+        {
+            assertableLogProvider.assertContainsExactlyOneMessageMatching( startsWith( "Unable to resolve address for" ) );
+            assertableLogProvider.assertLogStringContains(catchupAddressResolutionException.getMessage() );
+        }
+    }
+
     private PageCache neverSupportingFileOperationPageCache( PageCache pageCache )
     {
         PageCache spy = spy( pageCache );
@@ -340,5 +415,14 @@ public class StoreCopyClientIT
     private String clientFileContents( InMemoryStoreStreamProvider storeFileStreamsProvider, String filename )
     {
         return storeFileStreamsProvider.fileStreams().get( filename ).toString();
+    }
+
+    private static class Once implements TerminationCondition
+    {
+        @Override
+        public void assertContinue() throws StoreCopyFailedException
+        {
+            throw new StoreCopyFailedException( "One try only" );
+        }
     }
 }

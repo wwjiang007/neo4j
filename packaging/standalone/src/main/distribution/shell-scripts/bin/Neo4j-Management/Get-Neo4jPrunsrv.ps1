@@ -1,5 +1,5 @@
-# Copyright (c) 2002-2018 "Neo Technology,"
-# Network Engine for Objects in Lund AB [http://neotechnology.com]
+# Copyright (c) 2002-2018 "Neo4j,"
+# Neo4j Sweden AB [http://neo4j.com]
 #
 # This file is part of Neo4j.
 #
@@ -31,7 +31,10 @@ An object representing a valid Neo4j Server object
 Retrieve the PrunSrv command line to install a Neo4j Server
 
 .PARAMETER ForServerUninstall
-Retrieve the PrunSrv command line to install a Neo4j Server
+Retrieve the PrunSrv command line to uninstall a Neo4j Server
+
+.PARAMETER ForServerUpdate
+Retrieve the PrunSrv command line to update a Neo4j Server
 
 .PARAMETER ForConsole
 Retrieve the PrunSrv command line to start a Neo4j Server in the console.
@@ -43,28 +46,37 @@ System.Collections.Hashtable
 This function is private to the powershell module
 
 #>
-Function Get-Neo4jPrunsrv
+function Get-Neo4jPrunsrv
 {
-  [cmdletBinding(SupportsShouldProcess=$false,ConfirmImpact='Low',DefaultParameterSetName='ConsoleInvoke')]
-  param (
-    [Parameter(Mandatory=$true,ValueFromPipeline=$false)]
-    [PSCustomObject]$Neo4jServer
+  [CmdletBinding(SupportsShouldProcess = $false,ConfirmImpact = 'Low',DefaultParameterSetName = 'ConsoleInvoke')]
+  param(
+    [Parameter(Mandatory = $true,ValueFromPipeline = $false)]
+    [pscustomobject]$Neo4jServer
 
-    ,[Parameter(Mandatory=$true,ValueFromPipeline=$false,ParameterSetName='ServerInstallInvoke')]
+    ,[Parameter(Mandatory = $true,ValueFromPipeline = $false,ParameterSetName = 'ServerInstallInvoke')]
     [switch]$ForServerInstall
 
-    ,[Parameter(Mandatory=$true,ValueFromPipeline=$false,ParameterSetName='ServerUninstallInvoke')]
+    ,[Parameter(Mandatory = $true,ValueFromPipeline = $false,ParameterSetName = 'ServerUninstallInvoke')]
     [switch]$ForServerUninstall
 
-    ,[Parameter(Mandatory=$true,ValueFromPipeline=$false,ParameterSetName='ConsoleInvoke')]
+    ,[Parameter(Mandatory = $true,ValueFromPipeline = $false,ParameterSetName = 'ServerUpdateInvoke')]
+    [switch]$ForServerUpdate
+
+    ,[Parameter(Mandatory = $true,ValueFromPipeline = $false,ParameterSetName = 'ServerStartInvoke')]
+    [switch]$ForServerStart
+
+    ,[Parameter(Mandatory = $true,ValueFromPipeline = $false,ParameterSetName = 'ServerStopInvoke')]
+    [switch]$ForServerStop
+
+    ,[Parameter(Mandatory = $true,ValueFromPipeline = $false,ParameterSetName = 'ConsoleInvoke')]
     [switch]$ForConsole
   )
 
-  Begin
+  begin
   {
   }
 
-  Process
+  process
   {
     $JavaCMD = Get-Java -Neo4jServer $Neo4jServer -ForServer -ErrorAction Stop
     if ($JavaCMD -eq $null)
@@ -75,25 +87,30 @@ Function Get-Neo4jPrunsrv
 
     # JVMDLL is in %JAVA_HOME%\bin\server\jvm.dll
     $JvmDLL = Join-Path -Path (Join-Path -Path (Split-Path $JavaCMD.java -Parent) -ChildPath 'server') -ChildPath 'jvm.dll'
-    if (-Not (Test-Path -Path $JvmDLL)) { Throw "Could not locate JVM.DLL at $JvmDLL" }
+    if (-not (Test-Path -Path $JvmDLL)) { throw "Could not locate JVM.DLL at $JvmDLL" }
 
     # Get the Service Name
     $Name = Get-Neo4jWindowsServiceName -Neo4jServer $Neo4jServer -ErrorAction Stop
 
     # Find PRUNSRV for this architecture
     # This check will return the OS architecture even when running a 32bit app on 64bit OS
-    switch ( (Get-WMIObject -Class Win32_Processor | Select-Object -First 1).Addresswidth ) {
-      32 { $PrunSrvName = 'prunsrv-i386.exe' }  # 4 Bytes = 32bit
+    switch ((Get-WmiObject -Class Win32_Processor | Select-Object -First 1).Addresswidth) {
+      32 { $PrunSrvName = 'prunsrv-i386.exe' } # 4 Bytes = 32bit
       64 { $PrunSrvName = 'prunsrv-amd64.exe' } # 8 Bytes = 64bit
-      default { throw "Unable to determine the architecture of this operating system (Integer is $([IntPtr]::Size))"}
+      default { throw "Unable to determine the architecture of this operating system (Integer is $([IntPtr]::Size))" }
     }
-    $PrunsrvCMD = Join-Path (Join-Path -Path(Join-Path -Path $Neo4jServer.Home -ChildPath 'bin') -ChildPath 'tools') -ChildPath $PrunSrvName
-    if (-not (Test-Path -Path $PrunsrvCMD)) { throw "Could not find PRUNSRV at $PrunsrvCMD"}
+    $PrunsrvCMD = Join-Path (Join-Path -Path (Join-Path -Path $Neo4jServer.Home -ChildPath 'bin') -ChildPath 'tools') -ChildPath $PrunSrvName
+    if (-not (Test-Path -Path $PrunsrvCMD)) { throw "Could not find PRUNSRV at $PrunsrvCMD" }
 
     # Build the PRUNSRV command line
     switch ($PsCmdlet.ParameterSetName) {
-      "ServerInstallInvoke"   {
+      "ServerInstallInvoke" {
         $PrunArgs += @("`"//IS//$($Name)`"")
+      }
+      "ServerUpdateInvoke" {
+        $PrunArgs += @("`"//US//$($Name)`"")
+      }
+      { @("ServerInstallInvoke","ServerUpdateInvoke") -contains $_ } {
 
         $JvmOptions = @()
 
@@ -101,11 +118,11 @@ Function Get-Neo4jPrunsrv
         # Try neo4j.conf first, but then fallback to neo4j-wrapper.conf for backwards compatibility reasons
         $setting = (Get-Neo4jSetting -ConfigurationFile 'neo4j.conf' -Name 'dbms.jvm.additional' -Neo4jServer $Neo4jServer)
         if ($setting -ne $null) {
-          $JvmOptions = [array](Merge-Neo4jJavaSettings -Source $JvmOptions -Add $setting.Value)
+          $JvmOptions = [array](Merge-Neo4jJavaSettings -Source $JvmOptions -Add $setting.value)
         } else {
           $setting = (Get-Neo4jSetting -ConfigurationFile 'neo4j-wrapper.conf' -Name 'dbms.jvm.additional' -Neo4jServer $Neo4jServer)
           if ($setting -ne $null) {
-            $JvmOptions = [array](Merge-Neo4jJavaSettings -Source $JvmOptions -Add $setting.Value)
+            $JvmOptions = [array](Merge-Neo4jJavaSettings -Source $JvmOptions -Add $setting.value)
           }
         }
 
@@ -151,25 +168,26 @@ Function Get-Neo4jPrunsrv
           }
         }
 
-        if ($Neo4jServer.ServerType -eq 'Enterprise') { $serverMainClass = 'org.neo4j.server.enterprise.OpenEnterpriseEntryPoint' }
         if ($Neo4jServer.ServerType -eq 'Community') { $serverMainClass = 'org.neo4j.server.CommunityEntryPoint' }
         if ($Neo4jServer.DatabaseMode.ToUpper() -eq 'ARBITER') { $serverMainClass = 'org.neo4j.server.enterprise.ArbiterEntryPoint' }
         if ($serverMainClass -eq '') { Write-Error "Unable to determine the Server Main Class from the server information"; return $null }
         $PrunArgs += @("`"--StopClass=$($serverMainClass)`"",
-                       "`"--StartClass=$($serverMainClass)`"")
+          "`"--StartClass=$($serverMainClass)`"")
       }
       "ServerUninstallInvoke" { $PrunArgs += @("`"//DS//$($Name)`"") }
-      "ConsoleInvoke"         { $PrunArgs += @("`"//TS//$($Name)`"") }
+      "ServerStartInvoke" { $PrunArgs += @("`"//ES//$($Name)`"") }
+      "ServerStopInvoke" { $PrunArgs += @("`"//SS//$($Name)`"") }
+      "ConsoleInvoke" { $PrunArgs += @("`"//TS//$($Name)`"") }
       default {
-        throw "Unknown ParameterSerName $($PsCmdlet.ParameterSetName)"
+        throw "Unknown ParameterSetName $($PsCmdlet.ParameterSetName)"
         return $null
       }
     }
 
-    Write-Output @{'cmd' = $PrunsrvCMD; 'args' = $PrunArgs}
+    Write-Output @{ 'cmd' = $PrunsrvCMD; 'args' = $PrunArgs }
   }
 
-  End
+  end
   {
   }
 }

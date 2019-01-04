@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -33,7 +36,7 @@ class MiscAcceptanceTest extends ExecutionEngineFunSuite with CypherComparisonSu
       WHERE i <> j
       RETURN i, j"""
 
-    val result = executeWith(Configs.Interpreted + Configs.Morsel, query)
+    val result = executeWith(Configs.Interpreted, query)
     result.toList should equal(List(Map("j" -> 1, "i" -> 0), Map("j" -> 0, "i" -> 1)))
   }
 
@@ -54,7 +57,16 @@ class MiscAcceptanceTest extends ExecutionEngineFunSuite with CypherComparisonSu
     val n = createNode("prop" -> 42)
 
     val query = "UNWIND $nodes AS n WITH n WHERE n.prop = 42 RETURN n"
-    val result = executeWith(Configs.Interpreted - Configs.Version2_3, query, params = Map("nodes" -> List(n)))
+    val result = executeWith(Configs.All - Configs.Version2_3, query, params = Map("nodes" -> List(n)))
+
+    result.toList should equal(List(Map("n" -> n)))
+  }
+
+  test("should unwind nodes from literal list") {
+    val n = createNode("prop" -> 42)
+
+    val query = "UNWIND [$node] AS n WITH n WHERE n.prop = 42 RETURN n"
+    val result = executeWith(Configs.All - Configs.Version2_3, query, params = Map("node" -> n))
 
     result.toList should equal(List(Map("n" -> n)))
   }
@@ -65,8 +77,55 @@ class MiscAcceptanceTest extends ExecutionEngineFunSuite with CypherComparisonSu
     val r = relate(a, b, "prop" -> 42)
 
     val query = "UNWIND $relationships AS r WITH r WHERE r.prop = 42 RETURN r"
-    val result = executeWith(Configs.Interpreted - Configs.Version2_3, query, params = Map("relationships" -> List(r)))
+    val result = executeWith(Configs.All - Configs.Version2_3, query, params = Map("relationships" -> List(r)))
 
     result.toList should equal(List(Map("r" -> r)))
+  }
+
+  test("should unwind relationships from literal list") {
+    val a = createNode()
+    val b = createNode()
+    val r = relate(a, b, "prop" -> 42)
+
+    val query = "UNWIND [$relationship] AS r WITH r WHERE r.prop = 42 RETURN r"
+    val result = executeWith(Configs.All - Configs.Version2_3, query, params = Map("relationship" -> r))
+
+    result.toList should equal(List(Map("r" -> r)))
+  }
+
+  test("should be able to use long values for LIMIT in interpreted runtime") {
+    val a = createNode()
+    val b = createNode()
+
+    val limit: Long = Int.MaxValue + 1l
+    // If we would use Ints for storing the limit, then we would end up with "limit 0"
+    // thus, if we actually return the two nodes, then it proves that we used a long
+    val query = "MATCH (n) RETURN n LIMIT " + limit
+    val worksCorrectlyInConfig = Configs.Version3_4 + Configs.Version3_3 - Configs.AllRulePlanners
+    // the query will work in all configs, but only have the correct result in those specified configs
+    val result = executeWith(Configs.All, query, Configs.All - worksCorrectlyInConfig)
+    result.toList should equal(List(Map("n" -> a), Map("n" -> b)))
+  }
+
+  test("should not explode on complex filter() projection in write query") {
+
+    val query = """UNWIND [{children : [
+                  |            {_type : "browseNodeId", _text : "20" },
+                  |            {_type : "childNodes", _text : "21" }
+                  |        ]},
+                  |       {children : [
+                  |            {_type : "browseNodeId", _text : "30" },
+                  |            {_type : "childNodes", _text : "31" }
+                  |        ]}] AS row
+                  |
+                  |WITH   head(filter( child IN row.children WHERE child._type = "browseNodeId" ))._text as nodeId,
+                  |       head(filter( child IN row.children WHERE child._type = "childNodes" )) as childElement
+                  |
+                  |MERGE  (parent:Category { id: toInt(nodeId) })
+                  |
+                  |RETURN *""".stripMargin
+
+    val result = graph.execute(query)
+    result.resultAsString() // should not explode
   }
 }

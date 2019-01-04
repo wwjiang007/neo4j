@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -78,6 +78,12 @@ public final class TimeValue extends TemporalValue<OffsetTime,TimeValue>
         return new TimeValue( OffsetTime.ofInstant( assertValidArgument( () -> Instant.ofEpochSecond( 0, nanosOfDayUTC ) ), offset ) );
     }
 
+    @Override
+    public String getTypeName()
+    {
+        return "Time";
+    }
+
     public static TimeValue parse( CharSequence text, Supplier<ZoneId> defaultZone, CSVHeaderInformation fieldsFromHeader )
     {
         if ( fieldsFromHeader != null )
@@ -110,6 +116,11 @@ public final class TimeValue extends TemporalValue<OffsetTime,TimeValue>
     public static TimeValue now( Clock clock, String timezone )
     {
         return now( clock.withZone( parseZoneName( timezone ) ) );
+    }
+
+    public static TimeValue now( Clock clock, Supplier<ZoneId> defaultZone )
+    {
+        return now( clock.withZone( defaultZone.get() ) );
     }
 
     public static TimeValue build( MapValue map, Supplier<ZoneId> defaultZone )
@@ -171,7 +182,8 @@ public final class TimeValue extends TemporalValue<OffsetTime,TimeValue>
 
     static OffsetTime defaultTime( ZoneId zoneId )
     {
-        return OffsetTime.of( Field.hour.defaultValue, Field.minute.defaultValue, Field.second.defaultValue, Field.nanosecond.defaultValue,
+        return OffsetTime.of( TemporalFields.hour.defaultValue, TemporalFields.minute.defaultValue,
+                TemporalFields.second.defaultValue, TemporalFields.nanosecond.defaultValue,
                 assertValidZone( () -> ZoneOffset.of( zoneId.toString() ) ) );
     }
 
@@ -188,12 +200,12 @@ public final class TimeValue extends TemporalValue<OffsetTime,TimeValue>
             @Override
             public TimeValue buildInternal()
             {
-                boolean selectingTime = fields.containsKey( Field.time );
+                boolean selectingTime = fields.containsKey( TemporalFields.time );
                 boolean selectingTimeZone;
                 OffsetTime result;
                 if ( selectingTime )
                 {
-                    AnyValue time = fields.get( Field.time );
+                    AnyValue time = fields.get( TemporalFields.time );
                     if ( !(time instanceof TemporalValue) )
                     {
                         throw new InvalidValuesArgumentException( String.format( "Cannot construct time from: %s", time ) );
@@ -260,7 +272,6 @@ public final class TimeValue extends TemporalValue<OffsetTime,TimeValue>
 
     private TimeValue( OffsetTime value )
     {
-        // truncate the offset to whole minutes
         this.value = value;
         this.nanosOfDayUTC = TemporalUtil.getNanosOfDayUTC( this.value );
     }
@@ -382,7 +393,7 @@ public final class TimeValue extends TemporalValue<OffsetTime,TimeValue>
     private static final String OFFSET_PATTERN = "(?<zone>Z|[+-](?<zoneHour>[0-9]{2})(?::?(?<zoneMinute>[0-9]{2}))?)";
     static final String TIME_PATTERN = LocalTimeValue.TIME_PATTERN + "(?:" + OFFSET_PATTERN + ")?";
     private static final Pattern PATTERN = Pattern.compile( "(?:T)?" + TIME_PATTERN );
-    private static final Pattern OFFSET = Pattern.compile( OFFSET_PATTERN );
+    static final Pattern OFFSET = Pattern.compile( OFFSET_PATTERN );
 
     static ZoneOffset parseOffset( String offset )
     {

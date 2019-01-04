@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -72,6 +72,13 @@ public class ProtocolHandshaker extends ChannelInboundHandlerAdapter
     @Override
     public void channelRead( ChannelHandlerContext ctx, Object msg )
     {
+        if ( !(msg instanceof ByteBuf) )
+        {
+            // we know it is HTTP as we only have HTTP (for Websocket) and TCP handlers installed.
+            log.warn( "Unsupported connection type: 'HTTP'. Bolt protocol only operates over a TCP connection or WebSocket." );
+            ctx.close();
+            return;
+        }
         ByteBuf buf = (ByteBuf) msg;
 
         try

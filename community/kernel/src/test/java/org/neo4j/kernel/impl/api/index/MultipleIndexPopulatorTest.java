@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -27,6 +27,7 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.concurrent.Callable;
 import java.util.function.IntPredicate;
 
@@ -43,6 +44,7 @@ import org.neo4j.kernel.api.index.PropertyAccessor;
 import org.neo4j.kernel.api.schema.SchemaDescriptorFactory;
 import org.neo4j.kernel.api.schema.index.SchemaIndexDescriptor;
 import org.neo4j.kernel.api.schema.index.SchemaIndexDescriptorFactory;
+import org.neo4j.kernel.impl.api.SchemaState;
 import org.neo4j.kernel.impl.api.index.MultipleIndexPopulator.IndexPopulation;
 import org.neo4j.logging.LogProvider;
 import org.neo4j.storageengine.api.schema.IndexSample;
@@ -53,9 +55,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -77,6 +79,8 @@ public class MultipleIndexPopulatorTest
     private StoreScan storeScan;
     @Mock( answer = Answers.RETURNS_MOCKS )
     private LogProvider logProvider;
+    @Mock
+    private SchemaState schemaState;
     @InjectMocks
     private MultipleIndexPopulator multipleIndexPopulator;
 
@@ -374,6 +378,7 @@ public class MultipleIndexPopulatorTest
         verify( indexPopulator2 ).close( true );
         verify( indexPopulator2 ).sampleResult();
         verify( indexStoreView ).replaceIndexCounts( anyLong(), anyLong(), anyLong(), anyLong() );
+        verify( schemaState ).clear();
     }
 
     @Test
@@ -386,7 +391,7 @@ public class MultipleIndexPopulatorTest
         addPopulator( indexPopulator1, 1 );
         addPopulator( indexPopulator2, 2 );
 
-        doThrow( getPopulatorException() ).when( indexPopulator2 )
+        doThrow( new UncheckedIOException( getPopulatorException() ) ).when( indexPopulator2 )
                 .newPopulatingUpdater( any( PropertyAccessor.class ) );
 
         IndexUpdater multipleIndexUpdater =
@@ -490,7 +495,7 @@ public class MultipleIndexPopulatorTest
 
     private void checkPopulatorFailure( IndexPopulator populator ) throws IOException
     {
-        verify( populator ).markAsFailed( startsWith( "java.io.IOException: something went wrong" ) );
+        verify( populator ).markAsFailed( contains( "something went wrong" ) );
         verify( populator ).close( false );
     }
 

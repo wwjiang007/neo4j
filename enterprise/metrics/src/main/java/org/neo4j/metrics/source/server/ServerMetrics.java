@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.metrics.source.server;
 
@@ -30,7 +33,7 @@ import org.neo4j.logging.Log;
 
 import static com.codahale.metrics.MetricRegistry.name;
 
-@Documented( ".Server Metrics" )
+@Documented( ".Server metrics" )
 public class ServerMetrics extends LifecycleAdapter
 {
     private static final String NAME_PREFIX = "neo4j.server";
@@ -49,17 +52,27 @@ public class ServerMetrics extends LifecycleAdapter
         this.registry = registry;
         this.serverThreadView = new ServerThreadView()
         {
+            private volatile boolean warnedAboutIdle;
+            private volatile boolean warnedAboutAll;
             @Override
             public int idleThreads()
             {
-                userLog.warn( "Server thread metrics not available (missing " + THREAD_JETTY_IDLE + ")" );
+                if ( !warnedAboutIdle )
+                {
+                    userLog.warn( "Server thread metrics not available (missing " + THREAD_JETTY_IDLE + ")" );
+                    warnedAboutIdle = true;
+                }
                 return -1;
             }
 
             @Override
             public int allThreads()
             {
-                userLog.warn( "Server thread metrics not available (missing " + THREAD_JETTY_ALL + ")" );
+                if ( !warnedAboutAll )
+                {
+                    userLog.warn( "Server thread metrics not available (missing " + THREAD_JETTY_ALL + ")" );
+                    warnedAboutAll = true;
+                }
                 return -1;
             }
         };

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -36,6 +36,7 @@ import java.util.function.Supplier;
 
 import org.neo4j.graphdb.DatabaseShutdownException;
 import org.neo4j.graphdb.security.AuthorizationExpiredException;
+import org.neo4j.internal.kernel.api.exceptions.TransactionFailureException;
 import org.neo4j.internal.kernel.api.security.LoginContext;
 import org.neo4j.io.pagecache.tracing.cursor.context.EmptyVersionContextSupplier;
 import org.neo4j.io.pagecache.tracing.cursor.context.VersionContextSupplier;
@@ -43,9 +44,9 @@ import org.neo4j.kernel.AvailabilityGuard;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.api.KernelTransactionHandle;
 import org.neo4j.kernel.api.exceptions.Status;
-import org.neo4j.internal.kernel.api.exceptions.TransactionFailureException;
 import org.neo4j.kernel.api.explicitindex.AutoIndexing;
 import org.neo4j.kernel.api.security.AnonymousContext;
+import org.neo4j.kernel.impl.api.index.IndexProviderMap;
 import org.neo4j.kernel.impl.api.index.IndexingService;
 import org.neo4j.kernel.impl.api.state.ConstraintIndexCreator;
 import org.neo4j.kernel.impl.constraints.ConstraintSemantics;
@@ -85,6 +86,7 @@ import org.neo4j.test.rule.concurrent.OtherThreadRule;
 import org.neo4j.time.Clocks;
 import org.neo4j.time.SystemNanoClock;
 
+import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.locks.LockSupport.parkNanos;
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -255,11 +257,27 @@ public class KernelTransactionsTest
                 {
                     try ( KernelTransaction transaction = getKernelTransaction( transactions ) )
                     {
-                        parkNanos( MILLISECONDS.toNanos( random.nextInt( 3 ) ) );
-                        if ( snapshots.get( threadIndex ) == null )
+                        KernelTransactionsSnapshot snapshot = null;
+                        try
                         {
-                            snapshots.set( threadIndex, transactions.get() );
                             parkNanos( MILLISECONDS.toNanos( random.nextInt( 3 ) ) );
+                            if ( snapshots.get( threadIndex ) == null )
+                            {
+                                requireNonNull( transactions, "transactions is null" );
+                                snapshot = requireNonNull( transactions.get(), "transactions.get() returned null" );
+                                snapshots.set( threadIndex, snapshot );
+                                parkNanos( MILLISECONDS.toNanos( random.nextInt( 3 ) ) );
+                            }
+                        }
+                        catch ( RuntimeException e )
+                        {
+                            StringBuilder sb = new StringBuilder( "Gotcha!\n" )
+                                    .append( "threadIndex=" ).append( threadIndex ).append( '\n' )
+                                    .append( "transaction=" ).append( transaction ).append( '\n' )
+                                    .append( "snapshots=" ).append( snapshots ).append( '\n' )
+                                    .append( "snapshot=" ).append( snapshot ).append( '\n' )
+                                    .append( "end=" ).append( end );
+                            throw new RuntimeException( sb.toString(), e );
                         }
                     }
                     catch ( TransactionFailureException e )
@@ -533,7 +551,8 @@ public class KernelTransactionsTest
             StorageStatement... otherStorageStatements ) throws Throwable
     {
         Locks locks = mock( Locks.class );
-        when( locks.newClient() ).thenReturn( mock( Locks.Client.class ) );
+        Locks.Client client = mock( Locks.Client.class );
+        when( locks.newClient() ).thenReturn( client );
 
         StoreReadLayer readLayer = mock( StoreReadLayer.class );
         when( readLayer.newStatement() ).thenReturn( firstStoreStatements, otherStorageStatements );
@@ -597,7 +616,7 @@ public class KernelTransactionsTest
                 DefaultCursors::new, AutoIndexing.UNSUPPORTED,
                 mock( ExplicitIndexStore.class ), EmptyVersionContextSupplier.EMPTY, ON_HEAP,
                 mock( ConstraintSemantics.class ), mock( SchemaState.class ),
-                mock( IndexingService.class) );
+                mock( IndexingService.class ), mock( IndexProviderMap.class ) );
     }
 
     private static TestKernelTransactions createTestTransactions( StorageEngine storageEngine,
@@ -667,7 +686,7 @@ public class KernelTransactionsTest
                     transactionIdStore, clock, new AtomicReference<>( CpuClock.NOT_AVAILABLE ), new AtomicReference<>( HeapAllocation.NOT_AVAILABLE ),
                     accessCapability, cursors, autoIndexing, mock( ExplicitIndexStore.class ), versionContextSupplier,
                     ON_HEAP, new StandardConstraintSemantics(), mock( SchemaState.class ),
-                    mock( IndexingService.class ) );
+                    mock( IndexingService.class ), mock( IndexProviderMap.class ) );
         }
 
         @Override

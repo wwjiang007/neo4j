@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.core.state.machines.token;
 
@@ -34,7 +37,6 @@ import org.neo4j.kernel.impl.store.record.TokenRecord;
 import org.neo4j.kernel.impl.transaction.command.Command;
 import org.neo4j.kernel.impl.transaction.log.PhysicalTransactionRepresentation;
 import org.neo4j.kernel.impl.transaction.tracing.CommitEvent;
-import org.neo4j.kernel.impl.util.collection.NoSuchEntryException;
 import org.neo4j.logging.Log;
 import org.neo4j.logging.LogProvider;
 import org.neo4j.storageengine.api.StorageCommand;
@@ -43,6 +45,7 @@ import org.neo4j.storageengine.api.TokenFactory;
 import org.neo4j.storageengine.api.TransactionApplicationMode;
 
 import static java.lang.String.format;
+import static org.neo4j.causalclustering.core.state.machines.token.ReplicatedTokenRequestSerializer.extractCommands;
 import static org.neo4j.causalclustering.core.state.machines.tx.LogIndexTxHeaderEncoding.encodeLogIndexAsTxHeader;
 
 public class ReplicatedTokenStateMachine<TOKEN extends Token> implements StateMachine<ReplicatedTokenRequest>
@@ -81,31 +84,27 @@ public class ReplicatedTokenStateMachine<TOKEN extends Token> implements StateMa
             return;
         }
 
-        Integer tokenId = tokenRegistry.getId( tokenRequest.tokenName() );
+        Collection<StorageCommand> commands = extractCommands( tokenRequest.commandBytes() );
+        int newTokenId = extractTokenId( commands );
 
-        if ( tokenId == null )
+        Integer existingTokenId = tokenRegistry.getId( tokenRequest.tokenName() );
+
+        if ( existingTokenId == null )
         {
-            try
-            {
-                Collection<StorageCommand> commands =
-                        ReplicatedTokenRequestSerializer.extractCommands( tokenRequest.commandBytes() );
-                tokenId = applyToStore( commands, commandIndex );
-            }
-            catch ( NoSuchEntryException e )
-            {
-                throw new IllegalStateException( "Commands did not contain token command" );
-            }
-
-            tokenRegistry.addToken( tokenFactory.newToken( tokenRequest.tokenName(), tokenId ) );
+            applyToStore( commands, commandIndex );
+            tokenRegistry.addToken( tokenFactory.newToken( tokenRequest.tokenName(), newTokenId ) );
+            callback.accept( Result.of( newTokenId ) );
         }
-
-        callback.accept( Result.of( tokenId ) );
+        else
+        {
+            // This should be rare so a warning is in order.
+            log.warn( format( "Ignored %s (newTokenId=%d) since it already exists with existingTokenId=%d", tokenRequest, newTokenId, existingTokenId ) );
+            callback.accept( Result.of( existingTokenId ) );
+        }
     }
 
-    private int applyToStore( Collection<StorageCommand> commands, long logIndex ) throws NoSuchEntryException
+    private void applyToStore( Collection<StorageCommand> commands, long logIndex )
     {
-        int tokenId = extractTokenId( commands );
-
         PhysicalTransactionRepresentation representation = new PhysicalTransactionRepresentation( commands );
         representation.setHeader( encodeLogIndexAsTxHeader( logIndex ), 0, 0, 0, 0L, 0L, 0 );
 
@@ -118,11 +117,9 @@ public class ReplicatedTokenStateMachine<TOKEN extends Token> implements StateMa
         {
             throw new RuntimeException( e );
         }
-
-        return tokenId;
     }
 
-    private int extractTokenId( Collection<StorageCommand> commands ) throws NoSuchEntryException
+    private int extractTokenId( Collection<StorageCommand> commands )
     {
         for ( StorageCommand command : commands )
         {
@@ -131,7 +128,7 @@ public class ReplicatedTokenStateMachine<TOKEN extends Token> implements StateMa
                 return ((Command.TokenCommand<? extends TokenRecord>) command).getAfter().getIntId();
             }
         }
-        throw new NoSuchEntryException( "Expected command not found" );
+        throw new IllegalStateException( "Commands did not contain token command" );
     }
 
     @Override
@@ -145,7 +142,7 @@ public class ReplicatedTokenStateMachine<TOKEN extends Token> implements StateMa
     {
         if ( commitProcess == null )
         {
-            /** See {@link #installCommitProcess}. */
+            /* See {@link #installCommitProcess}. */
             throw new IllegalStateException( "Value has not been installed" );
         }
         return lastCommittedIndex;

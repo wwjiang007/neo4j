@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -64,7 +64,8 @@ case class GraphStatisticsSnapshot(statsValues: Map[StatisticsKey, Double] = Map
     val divergedStats = (statsValues map {
       case (k, e1) =>
         val e2 = snapshot.statsValues(k)
-        abs(e1 - e2) / max(e1, e2)
+        val divergence = abs(e1 - e2) / max(e1, e2)
+        if (divergence.isNaN) 0 else divergence
     }).max
     divergedStats > minThreshold
   }

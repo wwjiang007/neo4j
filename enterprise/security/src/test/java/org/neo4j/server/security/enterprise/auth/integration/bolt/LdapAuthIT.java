@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.server.security.enterprise.auth.integration.bolt;
 
@@ -58,6 +61,7 @@ import org.neo4j.bolt.v1.transport.socket.client.TransportConnection;
 import org.neo4j.graphdb.config.Setting;
 import org.neo4j.internal.kernel.api.security.AuthSubject;
 import org.neo4j.io.fs.FileSystemAbstraction;
+import org.neo4j.kernel.api.exceptions.InvalidArgumentsException;
 import org.neo4j.kernel.api.exceptions.Status;
 import org.neo4j.kernel.impl.factory.GraphDatabaseFacade;
 import org.neo4j.kernel.impl.proc.Procedures;
@@ -104,7 +108,7 @@ interface TimeoutTests
                                                           "objectClass: organization\n\n" ) ),
         },
         loadedSchemas = {
-                @LoadSchema( name = "nis", enabled = true ),
+                @LoadSchema( name = "nis" ),
         } )
 @CreateLdapServer(
         transports = {@CreateTransport( protocol = "LDAP", port = 10389, address = "0.0.0.0" ),
@@ -125,9 +129,9 @@ interface TimeoutTests
 @ApplyLdifFiles( "ldap_test_data.ldif" )
 public class LdapAuthIT extends EnterpriseAuthenticationTestBase
 {
-    public static final String LDAP_ERROR_MESSAGE_INVALID_CREDENTIALS = "LDAP: error code 49 - INVALID_CREDENTIALS";
-    public static final String NON_ROUTABLE_IP = "192.0.2.0"; // Ip in the TEST-NET-1 range, reserved for documentation...
-    public static final String REFUSED_IP = "127.0.0.1"; // "0.6.6.6";
+    private static final String LDAP_ERROR_MESSAGE_INVALID_CREDENTIALS = "LDAP: error code 49 - INVALID_CREDENTIALS";
+    private static final String NON_ROUTABLE_IP = "192.0.2.0"; // Ip in the TEST-NET-1 range, reserved for documentation...
+    private static final String REFUSED_IP = "127.0.0.1"; // "0.6.6.6";
     private final String MD5_HASHED_abc123 = "{MD5}6ZoYxCjLONXyYIU2eJIuAw==";
     // Hashed 'abc123' (see ldap_test_data.ldif)
 
@@ -448,13 +452,7 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
         String ldapReaderUser = "neo";
         String nativePassword = "nativePassword";
 
-        // this is ugly, but cannot be resolved until embedded gets security
-        GraphDatabaseFacade gds = (GraphDatabaseFacade) server.graphDatabaseService();
-        EnterpriseAuthAndUserManager authManager =
-                gds.getDependencyResolver().resolveDependency( EnterpriseAuthAndUserManager.class );
-
-        authManager.getUserManager( AuthSubject.AUTH_DISABLED, true )
-                .newUser( ldapReaderUser, nativePassword, false );
+        createNativeUser( ldapReaderUser, nativePassword );
 
         // Then
         // login user 'neo' with native auth provider and test that LDAP authorization gives correct permission
@@ -596,7 +594,7 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
                     .andThen( settings -> settings.put( SecuritySettings.ldap_read_timeout, "1s" ) ) );
 
             assertAuth( "neo", "abc123" );
-            assertLdapAuthorizationTimeout();
+            assertReadFails( "neo", "" );
         }
     }
 
@@ -614,7 +612,7 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
             } ) );
 
             assertAuth( "neo", "abc123" );
-            assertLdapAuthorizationTimeout();
+            assertReadFails( "neo", "" );
         }
     }
 
@@ -628,7 +626,7 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
                     .andThen( settings -> settings.put( SecuritySettings.ldap_read_timeout, "1s" ) ) );
 
             assertAuth( "neo", "abc123" );
-            assertLdapAuthorizationFailed();
+            assertReadFails( "neo", "" );
         }
     }
 
@@ -720,6 +718,25 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
     }
 
     @Test
+    public void shouldFailLoginWrongPasswordWithLdapOnlyUsingStartTls() throws Throwable
+    {
+        getLdapServer().setConfidentialityRequired( true );
+
+        try ( EmbeddedTestCertificates ignore = new EmbeddedTestCertificates() )
+        {
+            // When
+            restartNeo4jServerWithOverriddenSettings( ldapOnlyAuthSettings.andThen( settings ->
+            {
+                settings.put( SecuritySettings.ldap_server, "localhost:10389" );
+                settings.put( SecuritySettings.ldap_use_starttls, "true" );
+            } ) );
+
+            // Then
+            assertAuthFail( "neo", "wrong" );
+        }
+    }
+
+    @Test
     public void shouldBeAbleToLoginAndAuthorizeReaderWithLdapUserContextUsingStartTls() throws Throwable
     {
         getLdapServer().setConfidentialityRequired( true );
@@ -736,6 +753,26 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
 
             // Then
             testAuthWithReaderUser();
+        }
+    }
+
+    @Test
+    public void shouldFailLoginWrongPasswordWithLdapUserContextUsingStartTls() throws Throwable
+    {
+        getLdapServer().setConfidentialityRequired( true );
+
+        try ( EmbeddedTestCertificates ignore = new EmbeddedTestCertificates() )
+        {
+            // When
+            restartNeo4jServerWithOverriddenSettings( ldapOnlyAuthSettings.andThen( settings ->
+            {
+                settings.put( SecuritySettings.ldap_authorization_use_system_account, "false" );
+                settings.put( SecuritySettings.ldap_server, "localhost:10389" );
+                settings.put( SecuritySettings.ldap_use_starttls, "true" );
+            } ) );
+
+            // Then
+            assertAuthFail( "neo", "wrong" );
         }
     }
 
@@ -912,6 +949,32 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
         // When
         reconnect();
         assertAuth( "simon", createdUserPassword, "native" );
+
+        // Then
+        assertReadSucceeds();
+    }
+
+    @Test
+    public void shouldBeAbleToAuthorizeUsingNativeWhenLdapFails() throws Throwable
+    {
+        restartNeo4jServerWithOverriddenSettings( settings ->
+        {
+            settings.put( SecuritySettings.auth_providers,
+                    SecuritySettings.LDAP_REALM_NAME + "," + SecuritySettings.NATIVE_REALM_NAME );
+            settings.put( SecuritySettings.ldap_server, "ldap://" + REFUSED_IP );
+            settings.put( SecuritySettings.native_authentication_enabled, "true" );
+            settings.put( SecuritySettings.native_authorization_enabled, "true" );
+            settings.put( SecuritySettings.ldap_authentication_enabled, "true" );
+            settings.put( SecuritySettings.ldap_authorization_enabled, "true" );
+            settings.put( SecuritySettings.ldap_authorization_use_system_account, "true" );
+        } );
+
+        // Given
+        // we have a native 'simon' that is read only
+        createNativeUser( "simon", createdUserPassword, PredefinedRoles.READER );
+
+        // When
+        assertAuth( "simon", createdUserPassword );
 
         // Then
         assertReadSucceeds();
@@ -1364,6 +1427,22 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
         modifyLDAPAttribute( username, credentials, "gidnumber", gid );
     }
 
+    private void createNativeUser( String username, String password, String... roles ) throws IOException, InvalidArgumentsException
+    {
+        GraphDatabaseFacade gds = (GraphDatabaseFacade) server.graphDatabaseService();
+        EnterpriseAuthAndUserManager authManager =
+                gds.getDependencyResolver().resolveDependency( EnterpriseAuthAndUserManager.class );
+
+        authManager.getUserManager( AuthSubject.AUTH_DISABLED, true )
+                .newUser( username, password, false );
+
+        for ( String role : roles )
+        {
+            authManager.getUserManager( AuthSubject.AUTH_DISABLED, true )
+                    .addRoleToUser( role, username );
+        }
+    }
+
     private class DirectoryServiceWaitOnSearch implements AutoCloseable
     {
         private final Interceptor waitOnSearchInterceptor;
@@ -1528,7 +1607,7 @@ public class LdapAuthIT extends EnterpriseAuthenticationTestBase
 
         private void resetProperty( String property, String value )
         {
-            if ( property != null )
+            if ( value == null )
             {
                 System.clearProperty( property );
             }

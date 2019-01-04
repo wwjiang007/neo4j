@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -359,6 +362,58 @@ class NodeIndexSeekAcceptanceTest extends ExecutionEngineFunSuite with CypherCom
     result.toList should equal(List(Map("n" -> node1)))
   }
 
+  test("should not return any rows for OR predicates with different labels gh#12017") {
+    // Given
+    graph.createIndex("Label1", "prop1")
+    graph.createIndex("Label2", "prop2")
+    graph.execute("CREATE(:Label1 {prop1: 'val'})" )
+
+    // When
+    val result = executeWith(Configs.Interpreted, "MATCH (n:Label1:Label2) WHERE n.prop1 = 'val' OR n.prop2 = 'val' RETURN n",
+      planComparisonStrategy = ComparePlansWithAssertion(_ should useOperatorTimes("NodeIndexSeek", 2),
+        expectPlansToFail = Configs.OldAndRule))
+
+    // Then
+    result.toList should be (empty)
+  }
+
+  test("should be able to solve OR predicates with same label") {
+    // Given
+    graph.createIndex("Label1", "prop1")
+    graph.createIndex("Label1", "prop2")
+    val node1 = createLabeledNode(Map("prop1" -> "val"), "Label1")
+    val node2 = createLabeledNode(Map("prop2" -> "anotherVal"), "Label1")
+
+    // When
+    val result = executeWith(Configs.Interpreted, "MATCH (n:Label1) WHERE n.prop1 = 'val' OR n.prop2 = 'val' RETURN n",
+      planComparisonStrategy = ComparePlansWithAssertion(_ should useOperatorTimes("NodeIndexSeek", 2),
+        expectPlansToFail = Configs.OldAndRule))
+
+    // Then
+    result.toList should equal(List(Map("n" -> node1)))
+  }
+
+  test("should not return any rows for OR predicates with four indexes") {
+    // Given
+    graph.createIndex("Label1", "prop1")
+    graph.createIndex("Label1", "prop2")
+    graph.createIndex("Label2", "prop1")
+    graph.createIndex("Label2", "prop2")
+
+    for( i <- 1 to 10 ) {
+      graph.execute("CREATE(:Label1 {prop1: 'val', prop2: 'val'})" )
+      graph.execute("CREATE(:Label2 {prop1: 'val', prop2: 'val'})" )
+    }
+
+    // When
+    val result = executeWith(Configs.Interpreted, "MATCH (n:Label1:Label2) WHERE n.prop1 = 'val' OR n.prop2 = 'val' RETURN n",
+      planComparisonStrategy = ComparePlansWithAssertion(_ should useOperatorTimes("NodeIndexSeek", 4),
+        expectPlansToFail = Configs.OldAndRule))
+
+    // Then
+    result.toList should be (empty)
+  }
+
   private def setUpDatabaseForTests() {
     executeWith(Configs.Interpreted - Configs.Cost2_3,
       """CREATE (architect:Matrix { name:'The Architect' }),
@@ -380,5 +435,4 @@ class NodeIndexSeekAcceptanceTest extends ExecutionEngineFunSuite with CypherCom
 
     graph.createIndex("Crew", "name")
   }
-
 }

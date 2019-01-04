@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -36,9 +36,9 @@ import org.neo4j.kernel.api.index.IndexAccessor;
 import org.neo4j.kernel.api.index.IndexDirectoryStructure;
 import org.neo4j.kernel.api.index.IndexEntryUpdate;
 import org.neo4j.kernel.api.index.IndexPopulator;
+import org.neo4j.kernel.api.index.IndexProvider;
 import org.neo4j.kernel.api.index.IndexUpdater;
 import org.neo4j.kernel.api.index.LoggingMonitor;
-import org.neo4j.kernel.api.index.IndexProvider;
 import org.neo4j.kernel.api.schema.index.SchemaIndexDescriptor;
 import org.neo4j.kernel.api.schema.index.SchemaIndexDescriptorFactory;
 import org.neo4j.kernel.configuration.Config;
@@ -52,7 +52,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
-import static org.neo4j.index.internal.gbptree.RecoveryCleanupWorkCollector.IMMEDIATE;
+import static org.neo4j.index.internal.gbptree.RecoveryCleanupWorkCollector.immediate;
 import static org.neo4j.kernel.api.index.IndexDirectoryStructure.directoriesByProvider;
 
 public abstract class NativeIndexProviderTest
@@ -255,7 +255,7 @@ public abstract class NativeIndexProviderTest
     // pattern: open populator, markAsFailed, close populator, getInitialState, getPopulationFailure
 
     @Test
-    public void shouldReportInitialStateAsPopulatingIfIndexDoesntExist()
+    public void shouldReportCorrectInitialStateIfIndexDoesntExist()
     {
         // given
         provider = newProvider();
@@ -264,8 +264,16 @@ public abstract class NativeIndexProviderTest
         InternalIndexState state = provider.getInitialState( indexId, descriptor() );
 
         // then
-        assertEquals( InternalIndexState.POPULATING, state );
-        logging.assertContainsLogCallContaining( "Failed to open index" );
+        InternalIndexState expected = expectedStateOnNonExistingSubIndex();
+        assertEquals( expected, state );
+        if ( InternalIndexState.POPULATING == expected )
+        {
+            logging.assertContainsLogCallContaining( "Failed to open index" );
+        }
+        else
+        {
+            logging.assertNoLogCallContaining( "Failed to open index" );
+        }
     }
 
     @Test
@@ -319,6 +327,8 @@ public abstract class NativeIndexProviderTest
 
     /* storeMigrationParticipant */
 
+    protected abstract InternalIndexState expectedStateOnNonExistingSubIndex();
+
     protected abstract Value someValue();
 
     abstract IndexProvider newProvider( PageCache pageCache, FileSystemAbstraction fs, IndexDirectoryStructure.Factory dir,
@@ -329,12 +339,12 @@ public abstract class NativeIndexProviderTest
 
     private IndexProvider newProvider()
     {
-        return newProvider( pageCache(), fs(), directoriesByProvider( baseDir() ), monitor, IMMEDIATE );
+        return newProvider( pageCache(), fs(), directoriesByProvider( baseDir() ), monitor, immediate() );
     }
 
     private IndexProvider newReadOnlyProvider()
     {
-        return newReadOnlyProvider( pageCache(), fs(), directoriesByProvider( baseDir() ), monitor, IMMEDIATE );
+        return newReadOnlyProvider( pageCache(), fs(), directoriesByProvider( baseDir() ), monitor, immediate() );
     }
 
     private IndexSamplingConfig samplingConfig()

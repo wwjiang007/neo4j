@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -26,27 +29,6 @@ import org.neo4j.cypher.internal.compatibility.v3_4.runtime.{CompiledRuntimeName
 import org.neo4j.graphdb.QueryExecutionException
 
 class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
-
-  test("FROM should generate error") {
-    executeAndEnsureError(
-      "FROM GRAPH foo AT 'graph://url' RETURN 1",
-      "Projecting and returning graphs is not available in this implementation of Cypher due to lack of support for multiple graphs. (line 1, column 6 (offset: 5))"
-    )
-  }
-
-  test("INTO should generate error") {
-    executeAndEnsureError(
-      "INTO GRAPH foo AT 'graph://url' RETURN 1",
-      "Projecting and returning graphs is not available in this implementation of Cypher due to lack of support for multiple graphs. (line 1, column 6 (offset: 5))"
-    )
-  }
-
-  test("projecting graphs should generate error") {
-    executeAndEnsureError(
-      "WITH GRAPH AT 'url' AS foo MATCH (a) RETURN a.name",
-      "Projecting and returning graphs is not available in this implementation of Cypher due to lack of support for multiple graphs. (line 1, column 6 (offset: 5))"
-    )
-  }
 
   test("return node that's not there") {
     executeAndEnsureError(
@@ -127,7 +109,7 @@ class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
   test("cant use toString() on nodes") {
     executeAndEnsureError(
       "MATCH (n) RETURN toString(n)",
-      "Type mismatch: expected Boolean, Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime or DateTime but was Node (line 1, column 27 (offset: 26))"
+      "Type mismatch: expected Boolean, Float, Integer, Point, String, Duration, Date, Time, LocalTime, LocalDateTime or DateTime but was Node (line 1, column 27 (offset: 26))"
     )
   }
 
@@ -309,7 +291,7 @@ class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
       "MATCH (n:Person) USING INDEX n:Person(name) where n.lastname = \"Teleman\" return n",
       "Cannot use index hint in this context. Index hints are only supported for the following "+
         "predicates in WHERE (either directly or as part of a top-level AND or OR): equality comparison, " +
-        "inequality (range) comparison, STARTS WITH, IN condition or checking property " +
+        "inequality (range) comparison, STARTS WITH, point distance, IN condition or checking property " +
         "existence. The comparison cannot be performed between two property values. Note that the " +
         "label and property comparison must be specified on a non-optional node (line 1, " +
         "column 18 (offset: 17))"
@@ -486,6 +468,15 @@ class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
       "integer, 10508455564958384115, is too large")
   }
 
+  test("should not be able to use more then Long.MaxValue for LIMIT in interpreted runtime") {
+    val expectedErrorMessage = "Invalid input for LIMIT. Either the string does not have the appropriate format or the" +
+      " provided number is bigger then 2^63-1 (line 1, column 55 (offset: 54))"
+    val limit = "9223372036854775808" // this equals Long.MaxValue +1
+    executeAndEnsureError(
+      "CYPHER runtime = interpreted MATCH (n) RETURN n LIMIT " + limit,
+      expectedErrorMessage)
+  }
+
   private def executeAndEnsureErrorForAllRuntimes(query: String, expected: String, params: (String,Any)*): Unit = {
     executeAndEnsureErrorForAllRuntimes(query, List(expected), params:_*)
   }
@@ -501,7 +492,6 @@ class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
 
   private def executeAndEnsureError(query: String, expected: Seq[String], params: (String,Any)*) {
     import org.neo4j.cypher.internal.frontend.v3_4.helpers.StringHelper._
-
     import scala.collection.JavaConverters._
 
     val expectedErrorString = expected.map(e => s"'$e'").mkString(" or ")

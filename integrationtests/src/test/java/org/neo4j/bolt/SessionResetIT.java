@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.bolt;
 
@@ -25,12 +28,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.RuleChain;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.URI;
 import java.nio.channels.ClosedChannelException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -70,10 +68,8 @@ import static java.util.concurrent.CompletableFuture.runAsync;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static java.util.stream.IntStream.range;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
@@ -88,18 +84,9 @@ import static org.neo4j.test.assertion.Assert.assertEventually;
 
 public class SessionResetIT
 {
-    private static final int CSV_FILE_SIZE = 10_000;
-    private static final int LOAD_CSV_BATCH_SIZE = 10;
-
     private static final String SHORT_QUERY_1 = "CREATE (n:Node {name: 'foo', occupation: 'bar'})";
     private static final String SHORT_QUERY_2 = "MATCH (n:Node {name: 'foo'}) RETURN count(n)";
     private static final String LONG_QUERY = "UNWIND range(0, 10000000) AS i CREATE (n:Node {idx: i}) DELETE n";
-
-    private static final String LONG_PERIODIC_COMMIT_QUERY_TEMPLATE =
-            "USING PERIODIC COMMIT 1 " +
-            "LOAD CSV FROM '%s' AS line " +
-            "UNWIND range(1, " + LOAD_CSV_BATCH_SIZE + ") AS index " +
-            "CREATE (n:Node {id: index, name: line[0], occupation: line[1]})";
 
     private static final int STRESS_IT_THREAD_COUNT = Runtime.getRuntime().availableProcessors() * 2;
     private static final long STRESS_IT_DURATION_MS = SECONDS.toMillis( 5 );
@@ -139,26 +126,6 @@ public class SessionResetIT
     public void shouldTerminateQueryInExplicitTransaction() throws Exception
     {
         testQueryTermination( LONG_QUERY, false );
-    }
-
-    /**
-     * It is currently unsafe to terminate periodic commit query because it'll then be half-committed.
-     */
-    @Test
-    public void shouldNotTerminatePeriodicCommitQueries() throws Exception
-    {
-        Future<Void> queryResult = runQueryInDifferentThreadAndResetSession( longPeriodicCommitQuery(), true );
-
-        try
-        {
-            queryResult.get( 1, MINUTES );
-        }
-        catch ( ExecutionException ignore )
-        {
-        }
-        assertDatabaseIsIdle();
-
-        assertEquals( CSV_FILE_SIZE * LOAD_CSV_BATCH_SIZE, countNodes() );
     }
 
     @Test
@@ -317,14 +284,6 @@ public class SessionResetIT
         return kernelTransactions.activeTransactions().size();
     }
 
-    private long countNodes()
-    {
-        try ( Result result = db().execute( "MATCH (n) RETURN count(n) AS result" ) )
-        {
-            return (long) single( result ).get( "result" );
-        }
-    }
-
     private GraphDatabaseAPI db()
     {
         return (GraphDatabaseAPI) db.getGraphDatabaseService();
@@ -374,28 +333,6 @@ public class SessionResetIT
     {
         return error instanceof TransientException &&
                error.getMessage().startsWith( "The transaction has been terminated" );
-    }
-
-    private String longPeriodicCommitQuery()
-    {
-        URI fileUri = createTmpCsvFile();
-        return String.format( LONG_PERIODIC_COMMIT_QUERY_TEMPLATE, fileUri );
-    }
-
-    private URI createTmpCsvFile()
-    {
-        try
-        {
-            Path importDir = db.getConfig().get( GraphDatabaseSettings.load_csv_file_url_root ).toPath();
-            Files.createDirectory( importDir );
-            Path csvFile = Files.createTempFile( importDir, "test", ".csv" );
-            Iterable<String> lines = range( 0, CSV_FILE_SIZE ).mapToObj( i -> "Foo-" + i + ", Bar-" + i )::iterator;
-            return URI.create( "file:///" + Files.write( csvFile, lines ).getFileName() );
-        }
-        catch ( IOException e )
-        {
-            throw new UncheckedIOException( e );
-        }
     }
 
     private static void awaitAll( List<Future<?>> futures ) throws Exception

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -20,13 +20,15 @@
 package org.neo4j.cypher.internal.compiler.v3_4.planner.logical
 
 import org.neo4j.cypher.internal.compiler.v3_4.planner.BeLikeMatcher._
-import org.neo4j.cypher.internal.compiler.v3_4.planner.LogicalPlanningTestSupport2
+import org.neo4j.cypher.internal.compiler.v3_4.planner.{LogicalPlanningTestSupport2, StubbedLogicalPlanningConfiguration}
 import org.neo4j.cypher.internal.compiler.v3_4.planner.logical.Metrics.QueryGraphSolverInput
 import org.neo4j.cypher.internal.frontend.v3_4.ast._
+import org.neo4j.cypher.internal.ir.v3_4.RegularPlannerQuery
 import org.neo4j.cypher.internal.planner.v3_4.spi.PlanningAttributes.Cardinalities
 import org.neo4j.cypher.internal.util.v3_4._
 import org.neo4j.cypher.internal.util.v3_4.symbols._
 import org.neo4j.cypher.internal.util.v3_4.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.v3_4.expressions.SemanticDirection.INCOMING
 import org.neo4j.cypher.internal.v3_4.expressions._
 import org.neo4j.cypher.internal.v3_4.logical.plans.{Union, _}
 
@@ -44,6 +46,32 @@ class LeafPlanningIntegrationTest extends CypherFunSuite with LogicalPlanningTes
         RangeQueryExpression(PrefixSeekRangeWrapper(PrefixRange(StringLiteral("prefix")_)) _),
         Set.empty)
     )
+  }
+
+  test("should prefer cheaper optional expand over joins, even if not cheaper before rewriting") {
+    (new given {
+      cost = {
+        case (_: RightOuterHashJoin, _, _) => 6.610321376825E9
+        case (_: LeftOuterHashJoin, _, _) => 8.1523761738E9
+        case (_: Apply, _, _) => 7.444573003149691E9
+        case (_: OptionalExpand, _, _) => 4.76310362E8
+        case (_: Optional, _, _) => 7.206417822149691E9
+        case (_: Selection, _, _) => 1.02731056E8
+        case (_: Expand, _, _) => 7.89155379E7
+        case (_: AllNodesScan, _, _) => 3.50735724E7
+        case (_: Argument, _, _) => 2.38155181E8
+        case (_: ProjectEndpoints, _, _) => 11.0
+      }
+    } getLogicalPlanFor
+      """UNWIND {createdRelationships} as r
+        |MATCH (source)-[r]->(target)
+        |WITH source AS p
+        |OPTIONAL MATCH (p)<-[follow]-() WHERE type(follow) STARTS WITH 'ProfileFavorites'
+        |WITH p, count(follow) as fc
+        |RETURN 1
+      """.stripMargin)._2 should beLike {
+      case Projection(Aggregation(_: OptionalExpand, _, _), _) => ()
+    }
   }
 
   test("should plan index seek by prefix for simple prefix search based on CONTAINS substring") {
@@ -727,6 +755,59 @@ class LeafPlanningIntegrationTest extends CypherFunSuite with LogicalPlanningTes
     plan should equal(distinct)
   }
 
+  test("should be able to OR together two index seeks with different labels")
+  {
+    val plan = (new given {
+      indexOn("Label1", "prop1")
+      indexOn("Label2", "prop2")
+    } getLogicalPlanFor "MATCH (n:Label1:Label2) WHERE n.prop1 = 'val' OR n.prop2 = 'val' RETURN n")._2
+
+    val propPredicate = SingleQueryExpression(StringLiteral("val")(pos))
+    val prop1 = PropertyKeyToken("prop1", PropertyKeyId(0))
+    val prop2 = PropertyKeyToken("prop2", PropertyKeyId(1))
+    val labelPredicate1 = HasLabels(Variable("n")(pos), Seq(LabelName("Label1")(pos)))(pos)
+    val labelPredicate2 = HasLabels(Variable("n")(pos), Seq(LabelName("Label2")(pos)))(pos)
+    val labelToken1 = LabelToken("Label1", LabelId(0))
+    val labelToken2 = LabelToken("Label2", LabelId(1))
+
+    val seek1: NodeIndexSeek = NodeIndexSeek("n", labelToken1, Seq(prop1), propPredicate, Set.empty)
+    val seek2: NodeIndexSeek = NodeIndexSeek("n", labelToken2, Seq(prop2), propPredicate, Set.empty)
+    val union: Union = Union(seek2, seek1)
+    val distinct = Distinct(union, Map("n" -> varFor("n")))
+    val filter = Selection(Seq(labelPredicate1, labelPredicate2), distinct)
+
+    plan should equal(filter)
+  }
+
+  test("should be able to OR together four index seeks")
+  {
+    val plan = (new given {
+      indexOn("Label1", "prop1")
+      indexOn("Label1", "prop2")
+      indexOn("Label2", "prop1")
+      indexOn("Label2", "prop2")
+    } getLogicalPlanFor "MATCH (n:Label1:Label2) WHERE n.prop1 = 'val' OR n.prop2 = 'val' RETURN n")._2
+
+    val propPredicate = SingleQueryExpression(StringLiteral("val")(pos))
+    val prop1 = PropertyKeyToken("prop1", PropertyKeyId(0))
+    val prop2 = PropertyKeyToken("prop2", PropertyKeyId(1))
+    val labelPredicate1 = HasLabels(Variable("n")(pos), Seq(LabelName("Label1")(pos)))(pos)
+    val labelPredicate2 = HasLabels(Variable("n")(pos), Seq(LabelName("Label2")(pos)))(pos)
+    val labelToken1 = LabelToken("Label1", LabelId(0))
+    val labelToken2 = LabelToken("Label2", LabelId(1))
+
+    val seek1: NodeIndexSeek = NodeIndexSeek("n", labelToken1, Seq(prop1), propPredicate, Set.empty)
+    val seek2: NodeIndexSeek = NodeIndexSeek("n", labelToken1, Seq(prop2), propPredicate, Set.empty)
+    val seek3: NodeIndexSeek = NodeIndexSeek("n", labelToken2, Seq(prop1), propPredicate, Set.empty)
+    val seek4: NodeIndexSeek = NodeIndexSeek("n", labelToken2, Seq(prop2), propPredicate, Set.empty)
+
+    val union: Union = Union( Union( Union(seek2, seek4), seek1), seek3)
+    val distinct = Distinct(union, Map("n" -> varFor("n")))
+    val filter = Selection(Seq(labelPredicate1, labelPredicate2), distinct)
+
+    plan should equal(filter)
+  }
+
   test("should use transitive closure to figure out we can use index") {
     (new given {
       indexOn("Person", "name")
@@ -743,5 +824,97 @@ class LeafPlanningIntegrationTest extends CypherFunSuite with LogicalPlanningTes
     } getLogicalPlanFor "MATCH (a:Person)-->(b) WHERE b.prop = a.name AND b.prop = 42 RETURN b")._2 should beLike {
       case Selection(_, Expand(NodeIndexSeek("a", _, _, _, _), _, _, _, _, _, _)) => ()
     }
+  }
+
+  //---------------------------------------------------------------------------
+  // Test expand order with multiple configurations and
+  // unsupported.cypher.plan_with_minimum_cardinality_estimates setting
+  //
+  // To succeed this test assumes:
+  // *  (:A) should have lower cardinality than (:B) and (:C) so it is selected as starting point
+  // * (a)--(b) should have lower cardinality than (a)--(c) so that it is expanded first
+  //
+  // Ideally (and at the time of writing) the intrinsic order when the cardinalities are equal
+  // is different from the assertion and would cause failure
+  private def testAndAssertExpandOrder(config: StubbedLogicalPlanningConfiguration) {
+    val query = "MATCH (b:B)-[rB]->(a:A)<-[rC]-(c:C) RETURN a, b, c"
+
+    val plan = (config getLogicalPlanFor query)._2
+
+    // Expected plan
+    // Since (a)--(b) has a lower cardinality estimate than (a)--(c) it should be selected first
+    val scanA = NodeByLabelScan("a", LabelName("A")(pos), Set.empty)
+    val expandB = Expand(scanA, "a", INCOMING, Seq.empty, "b", "rB", ExpandAll)
+    val selectionB = Selection(Seq(HasLabels(Variable("b")(pos), Seq(LabelName("B")(pos)))(pos)), expandB)
+    val expandC = Expand(selectionB, "a", INCOMING, Seq.empty, "c", "rC", ExpandAll)
+    val selectionC = Selection(Seq(Not(Equals(Variable("rB")(pos), Variable("rC")(pos))(pos))(pos),
+      HasLabels(Variable("c")(pos), Seq(LabelName("C")(pos)))(pos)), expandC)
+    val expected = selectionC
+
+    plan should equal(expected)
+  }
+
+  test("should pick expands in an order that minimizes early cardinality increase") {
+    val config = new given {
+      cardinality = mapCardinality {
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a") => 1000.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("b") => 2000.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("c") => 2000.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "b") => 200.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "c") => 300.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "b", "c") => 100.0
+        case _ => throw new IllegalStateException("Unexpected PlannerQuery")
+      }
+      knownLabels = Set("A", "B", "C")
+    }
+    testAndAssertExpandOrder(config)
+  }
+
+  test("should pick expands in an order that minimizes early cardinality increase (plan_with_minimum_cardinality_estimates enabled)") {
+    val config = new givenPlanWithMinimumCardinalityEnabled {
+      cardinality = mapCardinality {
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a") => 1000.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("b") => 2000.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("c") => 2000.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "b") => 200.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "c") => 300.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "b", "c") => 100.0
+        case _ => throw new IllegalStateException("Unexpected PlannerQuery")
+      }
+      knownLabels = Set("A", "B", "C")
+    }
+    testAndAssertExpandOrder(config)
+  }
+
+  test("should pick expands in an order that minimizes early cardinality increase with estimates < 1.0") {
+    val config = new given {
+      cardinality = mapCardinality {
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a") =>  5.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("b") => 10.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("c") => 10.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "b") => 0.4
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "c") => 0.5
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "b", "c") => 0.1
+        case _ => throw new IllegalStateException("Unexpected PlannerQuery")
+      }
+      knownLabels = Set("A", "B", "C")
+    }
+    testAndAssertExpandOrder(config)
+  }
+
+  test("should pick expands in an order that minimizes early cardinality increase with estimates < 1.0 (plan_with_minimum_cardinality_estimates enabled)") {
+    val config = new givenPlanWithMinimumCardinalityEnabled {
+      cardinality = mapCardinality {
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a") =>  5.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("b") => 10.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("c") => 10.0
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "b") => 0.4
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "c") => 0.5
+        case RegularPlannerQuery(queryGraph, _, _) if queryGraph.patternNodes == Set("a", "b", "c") => 0.1
+        case _ => throw new IllegalStateException("Unexpected PlannerQuery")
+      }
+      knownLabels = Set("A", "B", "C")
+    }
+    testAndAssertExpandOrder(config)
   }
 }

@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -286,6 +289,44 @@ class PatternComprehensionAcceptanceTest extends ExecutionEngineFunSuite with Cy
     ))
   }
 
+  test("bug found where NOT predicate in pattern comprehension wasn't planned properly 1") {
+    val query =
+      """
+        |CREATE (bonus:Bonus)-[:FOR]->(movie:Movie)-[:BY]->(director:Director),
+        |   (user:User)-[:REVIEWED]->(movie1:Movie)-[:BY]->(director)
+        |WITH user, movie, director
+        |RETURN
+        |  [(b:Bonus)-[:FOR]->(movie)
+        |    WHERE NOT (user)-[:REVIEWED]->(:Movie)-[:BY]->(director) | id(b)] AS bonus
+      """.stripMargin
+
+    val result = executeWith(expectedToSucceedRestricted, query)
+    result.toList should equal(List(
+      Map("bonus" -> List())
+    ))
+    result.executionPlanDescription() should useOperators("AntiSemiApply", "RollUpApply")
+  }
+
+  test("bug found where NOT predicate in pattern comprehension wasn't planned properly 2") {
+    // In the original bug, the following query was the alternative that worked.
+    // This test is to make sure it will in the future as well
+    val query =
+    """
+      |CREATE (bonus:Bonus)-[:FOR]->(movie:Movie)-[:BY]->(director:Director),
+      |     (user:User)-[:REVIEWED]->(movie1:Movie)-[:BY]->(director)
+      |WITH user, movie, director
+      |RETURN
+      |  [(b:Bonus)-[:FOR]->(movie)
+      |    WHERE size([(user)-[r:REVIEWED]->(:Movie)-[:BY]->(director) | r]) = 0 | id(b)] AS bonus
+    """.stripMargin
+
+    val result = executeWith(expectedToSucceedRestricted, query)
+    result.toList should equal(List(
+      Map("bonus" -> List())
+    ))
+    result.executionPlanDescription() should useOperators("RollUpApply")
+  }
+
   test("using pattern comprehension as grouping key") {
     val n1 = createLabeledNode("START")
     val n2 = createLabeledNode("START")
@@ -449,5 +490,40 @@ class PatternComprehensionAcceptanceTest extends ExecutionEngineFunSuite with Cy
 
     val result = executeWith(Configs.Interpreted - Configs.OldAndRule, query)
     result.toList should equal(List(Map("c" -> node2), Map("c" -> node3)))
+  }
+
+  test("should correctly evaluate pattern expression in predicate of pattern comprehension inside other expression") {
+    val setup =
+      """
+        |CREATE (a:A {foo: 'a1'}),
+        |       (a)-[:X]->(:B {foo:'b1'}),
+        |       (a)-[:X]->(:B {foo:'b2'})-[:X]->(:C)
+      """.stripMargin
+
+    val query =
+      """
+        |MATCH (a:A) WHERE a.foo = 'a1'
+        |RETURN size([ (a)-->(b:B)
+        |         WHERE (b)-->(:C)
+        |         | b.foo ]) as arraySize
+      """.stripMargin
+
+    graph.execute(setup)
+
+    val res = executeWith(Configs.Interpreted - Configs.Version2_3 - Configs.AllRulePlanners, query,
+      expectedDifferentResults = Configs.Version3_1)
+    // If the (b)-->(:C) does not get correctly evaluated, this will be two instead
+    res.toList should equal(List(Map("arraySize" -> 1)))
+  }
+
+  test("should not explode because we RETURN an expand star with a pattern comprehension") {
+    val query =
+      """
+        |EXPLAIN MATCH (a)
+        |RETURN *, [ (a)-[:HAS_BUREAU]->(bureau:Bureau) | bureau.CREDIT_ACTIVE = "Active"] as bureauStatus
+      """.stripMargin
+
+    val result = graph.execute(query)
+    result.resultAsString() // should not throw
   }
 }

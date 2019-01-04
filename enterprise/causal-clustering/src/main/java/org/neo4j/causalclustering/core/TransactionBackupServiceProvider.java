@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.core;
 
@@ -23,11 +26,9 @@ import io.netty.channel.ChannelInboundHandler;
 
 import java.util.Collection;
 import java.util.Optional;
-import java.util.function.Function;
 
 import org.neo4j.causalclustering.catchup.CatchupServerBuilder;
 import org.neo4j.causalclustering.catchup.CatchupServerHandler;
-import org.neo4j.causalclustering.catchup.CatchupServerProtocol;
 import org.neo4j.causalclustering.net.Server;
 import org.neo4j.causalclustering.protocol.NettyPipelineBuilderFactory;
 import org.neo4j.causalclustering.protocol.handshake.ApplicationSupportedProtocols;
@@ -41,7 +42,6 @@ public class TransactionBackupServiceProvider
 {
     private final LogProvider logProvider;
     private final LogProvider userLogProvider;
-    private final TransactionBackupServiceAddressResolver transactionBackupServiceAddressResolver;
     private final ChannelInboundHandler parentHandler;
     private final ApplicationSupportedProtocols catchupProtocols;
     private final Collection<ModifierSupportedProtocols> supportedModifierProtocols;
@@ -60,14 +60,13 @@ public class TransactionBackupServiceProvider
         this.supportedModifierProtocols = supportedModifierProtocols;
         this.serverPipelineBuilderFactory = serverPipelineBuilderFactory;
         this.catchupServerHandler = catchupServerHandler;
-        this.transactionBackupServiceAddressResolver = new TransactionBackupServiceAddressResolver();
     }
 
     public Optional<Server> resolveIfBackupEnabled( Config config )
     {
         if ( config.get( OnlineBackupSettings.online_backup_enabled ) )
         {
-            ListenSocketAddress backupAddress = transactionBackupServiceAddressResolver.backupAddressForTxProtocol( config );
+            ListenSocketAddress backupAddress = HostnamePortAsListenAddress.resolve( config, OnlineBackupSettings.online_backup_server );
             logProvider.getLog( TransactionBackupServiceProvider.class ).info( "Binding backup service on address %s", backupAddress );
             return Optional.of( new CatchupServerBuilder( catchupServerHandler )
                     .serverHandler( parentHandler )

@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.tools.dump;
 
@@ -31,6 +34,7 @@ import java.util.regex.Pattern;
 import org.neo4j.helpers.Args;
 import org.neo4j.io.fs.DefaultFileSystemAbstraction;
 import org.neo4j.io.fs.FileSystemAbstraction;
+import org.neo4j.kernel.impl.transaction.command.Command;
 import org.neo4j.kernel.impl.transaction.command.Command.NodeCommand;
 import org.neo4j.kernel.impl.transaction.command.Command.PropertyCommand;
 import org.neo4j.kernel.impl.transaction.command.Command.RelationshipCommand;
@@ -44,8 +48,8 @@ import org.neo4j.kernel.impl.transaction.log.entry.LogEntryCommand;
 import org.neo4j.kernel.impl.transaction.log.entry.LogHeader;
 import org.neo4j.kernel.impl.transaction.log.entry.LogHeaderReader;
 import org.neo4j.storageengine.api.StorageCommand;
+import org.neo4j.tools.dump.InconsistentRecords.Type;
 import org.neo4j.tools.dump.TransactionLogAnalyzer.Monitor;
-import org.neo4j.tools.dump.inconsistency.ReportInconsistencies;
 
 import static java.util.TimeZone.getTimeZone;
 import static org.neo4j.helpers.Format.DEFAULT_TIME_ZONE;
@@ -131,12 +135,12 @@ public class DumpLogicalLog
     public static class ConsistencyCheckOutputCriteria implements Predicate<LogEntry[]>, Function<LogEntry,String>
     {
         private final TimeZone timeZone;
-        private final ReportInconsistencies inconsistencies;
+        private final InconsistentRecords inconsistencies;
 
         public ConsistencyCheckOutputCriteria( String ccFile, TimeZone timeZone ) throws IOException
         {
             this.timeZone = timeZone;
-            inconsistencies = new ReportInconsistencies();
+            inconsistencies = new InconsistentRecords();
             new InconsistencyReportReader( inconsistencies ).read( new File( ccFile ) );
         }
 
@@ -167,27 +171,34 @@ public class DumpLogicalLog
 
         private boolean matches( StorageCommand command )
         {
+            Type type = mapCommandToType( command );
+            // For the time being we can assume BaseCommand here
+            return type != null && inconsistencies.containsId( type, ((Command.BaseCommand) command).getKey() );
+        }
+
+        private Type mapCommandToType( StorageCommand command )
+        {
             if ( command instanceof NodeCommand )
             {
-                return inconsistencies.containsNodeId( ((NodeCommand) command).getKey() );
+                return Type.NODE;
             }
             if ( command instanceof RelationshipCommand )
             {
-                return inconsistencies.containsRelationshipId( ((RelationshipCommand) command).getKey() );
+                return Type.RELATIONSHIP;
             }
             if ( command instanceof PropertyCommand )
             {
-                return inconsistencies.containsPropertyId( ((PropertyCommand) command).getKey() );
+                return Type.PROPERTY;
             }
             if ( command instanceof RelationshipGroupCommand )
             {
-                return inconsistencies.containsRelationshipGroupId( ((RelationshipGroupCommand) command).getKey() );
+                return Type.RELATIONSHIP_GROUP;
             }
             if ( command instanceof SchemaRuleCommand )
             {
-                return inconsistencies.containsSchemaIndexId( ((SchemaRuleCommand) command).getKey() );
+                return Type.SCHEMA_INDEX;
             }
-            return false;
+            return null; // means ignore this command
         }
 
         @Override

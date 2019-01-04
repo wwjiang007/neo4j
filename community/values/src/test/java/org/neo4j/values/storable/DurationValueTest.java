@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -19,16 +19,19 @@
  */
 package org.neo4j.values.storable;
 
+import org.hamcrest.Matchers;
+import org.junit.Test;
+
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.Temporal;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.junit.Test;
-
 import org.neo4j.helpers.collection.Pair;
+import org.neo4j.values.utils.InvalidValuesArgumentException;
 import org.neo4j.values.utils.TemporalParseException;
+import org.neo4j.values.utils.TemporalUtil;
 
 import static java.time.ZoneOffset.UTC;
 import static java.time.ZoneOffset.ofHours;
@@ -39,6 +42,7 @@ import static java.time.temporal.ChronoUnit.SECONDS;
 import static java.util.Collections.singletonList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
 import static org.neo4j.helpers.collection.Pair.pair;
 import static org.neo4j.values.storable.DateTimeValue.datetime;
@@ -68,13 +72,54 @@ public class DurationValueTest
         // then
         assertEquals( "+nanos", 500_000_000, pos.get( NANOS ) );
         assertEquals( "+seconds", 1, pos.get( SECONDS ) );
-        assertEquals( "-nanos", -400_000_000, neg.get( NANOS ) );
-        assertEquals( "-seconds", -1, neg.get( SECONDS ) );
+        assertEquals( "+nanos", 600_000_000, neg.get( NANOS ) );
+        assertEquals( "-seconds", -2, neg.get( SECONDS ) );
 
         assertEquals( "+nanos", 0, evenPos.get( NANOS ) );
         assertEquals( "+seconds", 1, evenPos.get( SECONDS ) );
-        assertEquals( "-nanos", 0, evenNeg.get( NANOS ) );
+        assertEquals( "+nanos", 0, evenNeg.get( NANOS ) );
         assertEquals( "-seconds", -1, evenNeg.get( SECONDS ) );
+    }
+
+    @Test
+    public void shouldFormatDurationToString()
+    {
+        testDurationToString( 1, 0, "PT1S" );
+        testDurationToString( -1, 0, "PT-1S" );
+
+        testDurationToString( 59, -500_000_000, "PT58.5S" );
+        testDurationToString( 59, 500_000_000, "PT59.5S" );
+        testDurationToString( 60, -500_000_000, "PT59.5S" );
+        testDurationToString( 60, 500_000_000, "PT1M0.5S" );
+        testDurationToString( 61, -500_000_000, "PT1M0.5S" );
+
+        testDurationToString( -59, 500_000_000, "PT-58.5S" );
+        testDurationToString( -59, -500_000_000, "PT-59.5S" );
+        testDurationToString( -60, 500_000_000, "PT-59.5S" );
+        testDurationToString( -60, -500_000_000, "PT-1M-0.5S" );
+        testDurationToString( -61, 500_000_000, "PT-1M-0.5S" );
+        testDurationToString( -61, -500_000_000, "PT-1M-1.5S" );
+
+        testDurationToString( 0, 5, "PT0.000000005S" );
+        testDurationToString( 0, -5, "PT-0.000000005S" );
+        testDurationToString( 0, 999_999_999, "PT0.999999999S" );
+        testDurationToString( 0, -999_999_999, "PT-0.999999999S" );
+
+        testDurationToString( 1, 5, "PT1.000000005S" );
+        testDurationToString( -1, -5, "PT-1.000000005S" );
+        testDurationToString( 1, -5, "PT0.999999995S" );
+        testDurationToString( -1, 5, "PT-0.999999995S" );
+        testDurationToString( 1, 999999999, "PT1.999999999S" );
+        testDurationToString( -1, -999999999, "PT-1.999999999S" );
+        testDurationToString( 1, -999999999, "PT0.000000001S" );
+        testDurationToString( -1, 999999999, "PT-0.000000001S" );
+
+        testDurationToString( -78036, -143000000, "PT-21H-40M-36.143S" );
+    }
+
+    private void testDurationToString( long seconds, int nanos, String expectedValue )
+    {
+        assertEquals( expectedValue, duration( 0, 0, seconds, nanos ).prettyPrint() );
     }
 
     @Test
@@ -85,13 +130,20 @@ public class DurationValueTest
         DurationValue neg = duration( 0, 0, -5, 1_500_000_000 );
         DurationValue x = duration( 0, 0, 1, -1_400_000_000 );
 
+        DurationValue y = duration( 0, 0, -59, -500_000_000 );
+        DurationValue y2 = duration( 0, 0, -60, 500_000_000 );
+
         // then
         assertEquals( "+nanos", 600_000_000, pos.get( NANOS ) );
         assertEquals( "+seconds", 3, pos.get( SECONDS ) );
-        assertEquals( "-nanos", -500_000_000, neg.get( NANOS ) );
-        assertEquals( "-seconds", -3, neg.get( SECONDS ) );
-        assertEquals( "-nanos", -400_000_000, x.get( NANOS ) );
-        assertEquals( "-seconds", 0, x.get( SECONDS ) );
+        assertEquals( "+nanos", 500_000_000, neg.get( NANOS ) );
+        assertEquals( "-seconds", -4, neg.get( SECONDS ) );
+        assertEquals( "+nanos", 600_000_000, x.get( NANOS ) );
+        assertEquals( "-seconds", -1, x.get( SECONDS ) );
+        assertEquals( "+nanos", 500_000_000, y.get( NANOS ) );
+        assertEquals( "-seconds", -60, y.get( SECONDS ) );
+        assertEquals( "+nanos", 500_000_000, y2.get( NANOS ) );
+        assertEquals( "-seconds", -60, y2.get( SECONDS ) );
     }
 
     @Test
@@ -107,11 +159,22 @@ public class DurationValueTest
         assertEquals( "PT0.000000001S", prettyPrint( 0, 0, 0, 1 ) );
         assertEquals( "PT0.1S", prettyPrint( 0, 0, 0, 100_000_000 ) );
         assertEquals( "PT0S", prettyPrint( 0, 0, 0, 0 ) );
+        assertEquals( "PT1S", prettyPrint( 0, 0, 0, 1_000_000_000 ) );
+        assertEquals( "PT-1S", prettyPrint( 0, 0, 0, -1_000_000_000 ) );
+        assertEquals( "PT1.5S", prettyPrint( 0, 0, 1, 500_000_000 ) );
+        assertEquals( "PT-1.4S", prettyPrint( 0, 0, -1, -400_000_000 ) );
     }
 
     private static String prettyPrint( long months, long days, long seconds, int nanos )
     {
         return duration( months, days, seconds, nanos ).prettyPrint();
+    }
+
+    @Test
+    public void shouldHandleLargeNanos()
+    {
+        DurationValue duration = DurationValue.duration( 0L, 0L, 0L, Long.MAX_VALUE );
+        assertEquals( Long.MAX_VALUE, duration.get( "nanoseconds" ).value() );
     }
 
     @Test
@@ -494,5 +557,96 @@ public class DurationValueTest
 
         // average nbr of days in 400 years doesn't imply equality
         assertNotEqual( duration( 400 * 12, 0, 0, 0 ), duration( 0, 146_097, 0, 0 ) );
+    }
+
+    @Test
+    public void shouldNotThrowWhenInsideOverflowLimit()
+    {
+        // when
+        duration(0, 0, Long.MAX_VALUE, 999_999_999 );
+
+        // then should not throw
+    }
+
+    @Test
+    public void shouldNotThrowWhenInsideNegativeOverflowLimit()
+    {
+        // when
+        duration(0, 0, Long.MIN_VALUE, -999_999_999 );
+
+        // then should not throw
+    }
+
+    @Test
+    public void shouldThrowOnOverflowOnNanos()
+    {
+        // when
+        int nanos = 1_000_000_000;
+        long seconds = Long.MAX_VALUE;
+        assertConstructorThrows( 0, 0, seconds, nanos );
+    }
+
+    @Test
+    public void shouldThrowOnNegativeOverflowOnNanos()
+    {
+        // when
+        int nanos = -1_000_000_000;
+        long seconds = Long.MIN_VALUE;
+        assertConstructorThrows( 0, 0, seconds, nanos );
+    }
+
+    @Test
+    public void shouldThrowOnOverflowOnDays()
+    {
+        // when
+        long days = Long.MAX_VALUE / TemporalUtil.SECONDS_PER_DAY;
+        long seconds = Long.MAX_VALUE - days * TemporalUtil.SECONDS_PER_DAY;
+        assertConstructorThrows( 0, days, seconds + 1, 0 );
+    }
+
+    @Test
+    public void shouldThrowOnNegativeOverflowOnDays()
+    {
+        // when
+        long days = Long.MIN_VALUE / TemporalUtil.SECONDS_PER_DAY;
+        long seconds = Long.MIN_VALUE - days * TemporalUtil.SECONDS_PER_DAY;
+        assertConstructorThrows( 0, days, seconds - 1, 0 );
+    }
+
+    @Test
+    public void shouldThrowOnOverflowOnMonths()
+    {
+        // when
+        long months = Long.MAX_VALUE / TemporalUtil.AVG_SECONDS_PER_MONTH;
+        long seconds = Long.MAX_VALUE - months * TemporalUtil.AVG_SECONDS_PER_MONTH;
+        assertConstructorThrows( months, 0, seconds + 1, 0 );
+    }
+
+    @Test
+    public void shouldThrowOnNegativeOverflowOnMonths()
+    {
+        // when
+        long months = Long.MIN_VALUE / TemporalUtil.AVG_SECONDS_PER_MONTH;
+        long seconds = Long.MIN_VALUE - months * TemporalUtil.AVG_SECONDS_PER_MONTH;
+        assertConstructorThrows( months, 0, seconds - 1, 0 );
+    }
+
+    private void assertConstructorThrows( long months, long days, long seconds, int nanos )
+    {
+        try
+        {
+            DurationValue duration = duration( months, days, seconds, nanos );
+            fail( "Should have failed" );
+        }
+        catch ( InvalidValuesArgumentException e )
+        {
+            assertThat( e.getMessage(), Matchers.allOf(
+                    Matchers.containsString( "Invalid value for duration" ),
+                    Matchers.containsString( "months=" + months ),
+                    Matchers.containsString( "days=" + days ),
+                    Matchers.containsString( "seconds=" + seconds ),
+                    Matchers.containsString( "nanos=" + nanos )
+            ) );
+        }
     }
 }

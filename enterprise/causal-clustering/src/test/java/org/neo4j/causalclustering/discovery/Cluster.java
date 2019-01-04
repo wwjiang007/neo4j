@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.discovery;
 
@@ -38,6 +41,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.IntFunction;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -49,13 +53,16 @@ import org.neo4j.causalclustering.core.consensus.NoLeaderFoundException;
 import org.neo4j.causalclustering.core.consensus.roles.Role;
 import org.neo4j.causalclustering.core.state.machines.id.IdGenerationException;
 import org.neo4j.causalclustering.core.state.machines.locks.LeaderOnlyLockManager;
+import org.neo4j.causalclustering.helper.ErrorHandler;
 import org.neo4j.causalclustering.readreplica.ReadReplicaGraphDatabase;
 import org.neo4j.function.ThrowingSupplier;
 import org.neo4j.graphdb.DatabaseShutdownException;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.TransactionFailureException;
+import org.neo4j.graphdb.TransientTransactionFailureException;
 import org.neo4j.graphdb.security.WriteOperationsNotAllowedException;
 import org.neo4j.helpers.AdvertisedSocketAddress;
+import org.neo4j.helpers.Exceptions;
 import org.neo4j.kernel.internal.DatabaseHealth;
 import org.neo4j.kernel.internal.GraphDatabaseAPI;
 import org.neo4j.kernel.monitoring.Monitors;
@@ -352,31 +359,66 @@ public class Cluster
         }
     }
 
-    public CoreClusterMember getDbWithRole( Role role )
+    public CoreClusterMember getMemberWithRole( Role role )
     {
-        return getDbWithAnyRole( role );
+        return getMemberWithAnyRole( role );
     }
 
-    public CoreClusterMember getDbWithRole( String dbName, Role role )
+    public List<CoreClusterMember> getAllMembersWithRole( Role role )
     {
-        return getDbWithAnyRole( dbName, role );
+        return getAllMembersWithAnyRole( role );
     }
 
-    public CoreClusterMember getDbWithAnyRole( Role... roles )
+    public CoreClusterMember getMemberWithRole( String dbName, Role role )
+    {
+        return getMemberWithAnyRole( dbName, role );
+    }
+
+    public List<CoreClusterMember> getAllMembersWithRole( String dbName, Role role )
+    {
+        return getAllMembersWithAnyRole( dbName, role );
+    }
+
+    public CoreClusterMember getMemberWithAnyRole( Role... roles )
     {
         String dbName = CausalClusteringSettings.database.getDefaultValue();
-        return getDbWithAnyRole( dbName, roles );
+        return getMemberWithAnyRole( dbName, roles );
     }
 
-    public CoreClusterMember getDbWithAnyRole( String dbName, Role... roles )
+    public List<CoreClusterMember> getAllMembersWithAnyRole( Role... roles )
+    {
+        String dbName = CausalClusteringSettings.database.getDefaultValue();
+        return getAllMembersWithAnyRole( dbName, roles );
+    }
+
+    public CoreClusterMember getMemberWithAnyRole( String dbName, Role... roles )
+    {
+        return getAllMembersWithAnyRole( dbName, roles ).stream().findFirst().orElse( null );
+    }
+
+    public List<CoreClusterMember> getAllMembersWithAnyRole( String dbName, Role... roles )
     {
         ensureDBName( dbName );
         Set<Role> roleSet = Arrays.stream( roles ).collect( toSet() );
 
-        Optional<CoreClusterMember> firstAppropriate = coreMembers.values().stream().filter( m ->
-            m.database() != null && m.dbName().equals( dbName ) &&  roleSet.contains( m.database().getRole() ) ).findFirst();
+        List<CoreClusterMember> list = new ArrayList<>();
+        for ( CoreClusterMember m : coreMembers.values() )
+        {
+            CoreGraphDatabase database = m.database();
+            if ( database == null )
+            {
+                continue;
+            }
 
-        return firstAppropriate.orElse( null );
+            if ( m.dbName().equals( dbName ) )
+            {
+                if ( roleSet.contains( database.getRole() ) )
+                {
+                    list.add( m );
+                }
+            }
+        }
+        return list;
     }
 
     public CoreClusterMember awaitLeader() throws TimeoutException
@@ -401,12 +443,12 @@ public class Cluster
 
     public CoreClusterMember awaitCoreMemberWithRole( Role role, long timeout, TimeUnit timeUnit ) throws TimeoutException
     {
-        return await( () -> getDbWithRole( role ), notNull(), timeout, timeUnit );
+        return await( () -> getMemberWithRole( role ), notNull(), timeout, timeUnit );
     }
 
     public CoreClusterMember awaitCoreMemberWithRole( String dbName, Role role, long timeout, TimeUnit timeUnit ) throws TimeoutException
     {
-        return await( () -> getDbWithRole( dbName, role ), notNull(), timeout, timeUnit );
+        return await( () -> getMemberWithRole( dbName, role ), notNull(), timeout, timeUnit );
     }
 
     public int numberOfCoreMembersReportedByTopology()
@@ -474,11 +516,10 @@ public class Cluster
 
     private boolean isTransientFailure( Throwable e )
     {
-        // TODO: This should really catch all cases of transient failures. Must be able to express that in a clearer
-        // manner...
-        return (e instanceof IdGenerationException) || isLockExpired( e ) || isLockOnFollower( e ) ||
-               isWriteNotOnLeader( e );
-
+        Predicate<Throwable> throwablePredicate =
+                e1 -> isLockExpired( e1 ) || isLockOnFollower( e1 ) || isWriteNotOnLeader( e1 ) || e1 instanceof TransientTransactionFailureException ||
+                        e1 instanceof IdGenerationException;
+        return Exceptions.contains( e, throwablePredicate );
     }
 
     private boolean isWriteNotOnLeader( Throwable e )

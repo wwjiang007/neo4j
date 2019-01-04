@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -143,8 +143,27 @@ public class GBPTree<KEY,VALUE> implements Closeable
             }
 
             @Override
-            public void cleanupFinished( long numberOfPagesVisited, long numberOfCleanedCrashPointers,
-                    long durationMillis )
+            public void cleanupRegistered()
+            {   // no-op
+            }
+
+            @Override
+            public void cleanupStarted()
+            {   // no-op
+            }
+
+            @Override
+            public void cleanupFinished( long numberOfPagesVisited, long numberOfCleanedCrashPointers, long durationMillis )
+            {   // no-op
+            }
+
+            @Override
+            public void cleanupClosed()
+            {   // no-op
+            }
+
+            @Override
+            public void cleanupFailed( Throwable throwable )
             {   // no-op
             }
 
@@ -166,6 +185,16 @@ public class GBPTree<KEY,VALUE> implements Closeable
         void noStoreFile();
 
         /**
+         * Called after cleanup job has been created
+         */
+        void cleanupRegistered();
+
+        /**
+         * Called after cleanup job has been started
+         */
+        void cleanupStarted();
+
+        /**
          * Called after recovery has completed and cleaning has been done.
          *
          * @param numberOfPagesVisited number of pages visited by the cleaner.
@@ -173,6 +202,17 @@ public class GBPTree<KEY,VALUE> implements Closeable
          * @param durationMillis time spent cleaning.
          */
         void cleanupFinished( long numberOfPagesVisited, long numberOfCleanedCrashPointers, long durationMillis );
+
+        /**
+         * Called when cleanup job is closed and lock is released
+         */
+        void cleanupClosed();
+
+        /**
+         * Called when cleanup job catches a throwable
+         * @param throwable cause of failure
+         */
+        void cleanupFailed( Throwable throwable );
 
         /**
          * Report tree state on startup.
@@ -1007,6 +1047,7 @@ public class GBPTree<KEY,VALUE> implements Closeable
         else
         {
             lock.cleanerLock();
+            monitor.cleanupRegistered();
 
             long generation = this.generation;
             long stableGeneration = stableGeneration( generation );
@@ -1016,7 +1057,7 @@ public class GBPTree<KEY,VALUE> implements Closeable
             CrashGenerationCleaner crashGenerationCleaner =
                     new CrashGenerationCleaner( pagedFile, bTreeNode, IdSpace.MIN_TREE_NODE_ID, highTreeNodeId,
                             stableGeneration, unstableGeneration, monitor );
-            GBPTreeCleanupJob cleanupJob = new GBPTreeCleanupJob( crashGenerationCleaner, lock );
+            GBPTreeCleanupJob cleanupJob = new GBPTreeCleanupJob( crashGenerationCleaner, lock, monitor, indexFile );
             recoveryCleanupWorkCollector.add( cleanupJob );
             return cleanupJob;
         }
@@ -1280,5 +1321,15 @@ public class GBPTree<KEY,VALUE> implements Closeable
     public boolean wasDirtyOnStartup()
     {
         return dirtyOnStartup;
+    }
+
+    /**
+     * Total size limit for key and value.
+     * This limit includes storage overhead that is specific to key implementation for example entity id or meta data about type.
+     * @return Total size limit for key and value or {@link TreeNode#NO_KEY_VALUE_SIZE_CAP} if no such value exists.
+     */
+    public int keyValueSizeCap()
+    {
+        return bTreeNode.keyValueSizeCap();
     }
 }

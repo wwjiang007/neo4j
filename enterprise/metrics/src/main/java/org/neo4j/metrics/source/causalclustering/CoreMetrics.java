@@ -1,28 +1,30 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.metrics.source.causalclustering;
 
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
 
-import java.io.IOException;
 import java.util.function.Supplier;
 
 import org.neo4j.causalclustering.core.consensus.CoreMetaData;
@@ -33,7 +35,7 @@ import org.neo4j.kernel.monitoring.Monitors;
 
 import static com.codahale.metrics.MetricRegistry.name;
 
-@Documented( ".Core Metrics" )
+@Documented( ".Core metrics" )
 public class CoreMetrics extends LifecycleAdapter
 {
     private static final String CAUSAL_CLUSTERING_PREFIX = "neo4j.causal_clustering.core";
@@ -66,6 +68,14 @@ public class CoreMetrics extends LifecycleAdapter
     public static final String DELAY = name( CAUSAL_CLUSTERING_PREFIX, "message_processing_delay" );
     @Documented( "Timer for RAFT message processing" )
     public static final String TIMER = name( CAUSAL_CLUSTERING_PREFIX, "message_processing_timer" );
+    @Documented( "Raft replication new request count" )
+    public static final String REPLICATION_NEW = name( CAUSAL_CLUSTERING_PREFIX, "replication_new" );
+    @Documented( "Raft replication attempt count" )
+    public static final String REPLICATION_ATTEMPT = name( CAUSAL_CLUSTERING_PREFIX, "replication_attempt" );
+    @Documented( "Raft Replication success count" )
+    public static final String REPLICATION_SUCCESS = name( CAUSAL_CLUSTERING_PREFIX, "replication_success" );
+    @Documented( "Raft Replication fail count" )
+    public static final String REPLICATION_FAIL = name( CAUSAL_CLUSTERING_PREFIX, "replication_fail" );
 
     private Monitors monitors;
     private MetricRegistry registry;
@@ -79,6 +89,7 @@ public class CoreMetrics extends LifecycleAdapter
     private final TxRetryMetric txRetryMetric = new TxRetryMetric();
     private final InFlightCacheMetric inFlightCacheMetric = new InFlightCacheMetric();
     private final RaftMessageProcessingMetric raftMessageProcessingMetric = RaftMessageProcessingMetric.create();
+    private final ReplicationMetric replicationMetric = new ReplicationMetric();
 
     public CoreMetrics( Monitors monitors, MetricRegistry registry, Supplier<CoreMetaData> coreMetaData )
     {
@@ -98,6 +109,7 @@ public class CoreMetrics extends LifecycleAdapter
         monitors.addMonitorListener( txRetryMetric );
         monitors.addMonitorListener( inFlightCacheMetric );
         monitors.addMonitorListener( raftMessageProcessingMetric );
+        monitors.addMonitorListener( replicationMetric );
 
         registry.register( COMMIT_INDEX, (Gauge<Long>) raftLogCommitIndexMetric::commitIndex );
         registry.register( APPEND_INDEX, (Gauge<Long>) raftLogAppendIndexMetric::appendIndex );
@@ -113,6 +125,10 @@ public class CoreMetrics extends LifecycleAdapter
         registry.register( ELEMENT_COUNT, (Gauge<Long>) inFlightCacheMetric::getElementCount );
         registry.register( DELAY, (Gauge<Long>) raftMessageProcessingMetric::delay );
         registry.register( TIMER, raftMessageProcessingMetric.timer() );
+        registry.register( REPLICATION_NEW, (Gauge<Long>) replicationMetric::newReplicationCount );
+        registry.register( REPLICATION_ATTEMPT, (Gauge<Long>) replicationMetric::attemptCount );
+        registry.register( REPLICATION_SUCCESS, (Gauge<Long>) replicationMetric::successCount );
+        registry.register( REPLICATION_FAIL, (Gauge<Long>) replicationMetric::failCount );
 
         for ( RaftMessages.Type type : RaftMessages.Type.values() )
         {
@@ -137,6 +153,10 @@ public class CoreMetrics extends LifecycleAdapter
         registry.remove( ELEMENT_COUNT );
         registry.remove( DELAY );
         registry.remove( TIMER );
+        registry.remove( REPLICATION_NEW );
+        registry.remove( REPLICATION_ATTEMPT );
+        registry.remove( REPLICATION_SUCCESS );
+        registry.remove( REPLICATION_FAIL );
 
         for ( RaftMessages.Type type : RaftMessages.Type.values() )
         {
@@ -151,6 +171,7 @@ public class CoreMetrics extends LifecycleAdapter
         monitors.removeMonitorListener( txRetryMetric );
         monitors.removeMonitorListener( inFlightCacheMetric );
         monitors.removeMonitorListener( raftMessageProcessingMetric );
+        monitors.removeMonitorListener( replicationMetric );
     }
 
     private String messageTimerName( RaftMessages.Type type )

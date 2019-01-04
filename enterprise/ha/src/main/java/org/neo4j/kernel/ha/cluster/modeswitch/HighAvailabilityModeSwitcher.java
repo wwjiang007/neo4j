@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.kernel.ha.cluster.modeswitch;
 
@@ -98,6 +101,11 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
     private ScheduledExecutorService modeSwitcherExecutor;
     private volatile URI me;
     private volatile Future<?> modeSwitcherFuture;
+
+    /*
+     * Valid values for this is TO_MASTER, TO_SLAVE or PENDING. It is updated before the switcher is
+     * called to the corresponding new state or set to PENDING if a switcher fails and doesn't retry.
+     */
     private volatile HighAvailabilityMemberState currentTargetState;
     private final AtomicBoolean canAskForElections = new AtomicBoolean( true );
     private final DataSourceManager neoStoreDataSourceSupplier;
@@ -222,17 +230,42 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
 
     private void stateChanged( HighAvailabilityMemberChangeEvent event )
     {
+        /*
+         * First of all, check if the state change is internal or external. In this context, internal means
+         * that the old and new state are different, so we definitely need to do something.
+         * Both cases may require a switcher to be activated, but external needs to check if the same as previously
+         * should be the one used (because the last attempt failed, for example) or maybe we simply need to update
+         * a field. Internal will probably require a new switcher to be used.
+         */
         if ( event.getNewState() == event.getOldState() )
         {
             /*
-             * We get here if for example a new master becomes available while we are already switching. In that case
-             * we don't change state but we must update with the new availableMasterId, but only if it is not null.
+             * This is the external change case. We need to check our internals and perhaps retry a transition
              */
-            if ( event.getServerHaUri() != null )
+            if ( event.getNewState() != HighAvailabilityMemberState.TO_MASTER )
             {
-                availableMasterId = event.getServerHaUri();
+                /*
+                 * We get here if for example a new master becomes available while we are already switching. In that
+                 * case we don't change state but we must update with the new availableMasterId,
+                 * but only if it is not null.
+                 */
+                if ( event.getServerHaUri() != null )
+                {
+                    availableMasterId = event.getServerHaUri();
+                }
+                return;
             }
-            return;
+            /*
+             * The other case is that the new state is TO_MASTER
+             */
+            else if ( currentTargetState == HighAvailabilityMemberState.TO_MASTER )
+            {
+                /*
+                 * We are still switching from before. If a failure had happened, then currentTargetState would
+                 * be PENDING.
+                 */
+                return;
+            }
         }
 
         availableMasterId = event.getServerHaUri();
@@ -297,6 +330,13 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
             catch ( Throwable e )
             {
                 msgLog.error( "Failed to switch to master", e );
+                /*
+                 * If the attempt to switch to master fails, then we must not try again. We'll trigger an election
+                 * and if we are elected again, we'll try again. We differentiate between this case and the case where
+                 * we simply receive another election result while switching hasn't completed yet by setting the
+                 * currentTargetState as follows:
+                 */
+                currentTargetState = HighAvailabilityMemberState.PENDING;
                 // Since this master switch failed, elect someone else
                 election.demote( instanceId );
             }

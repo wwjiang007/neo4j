@@ -1,25 +1,28 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
-import org.neo4j.cypher.ExecutionEngineFunSuite
+import org.neo4j.cypher.{ExecutionEngineFunSuite, SyntaxException}
 import org.neo4j.internal.cypher.acceptance.CypherComparisonSupport._
 
 class HelpfulErrorMessagesTest extends ExecutionEngineFunSuite with CypherComparisonSupport {
@@ -90,5 +93,160 @@ class HelpfulErrorMessagesTest extends ExecutionEngineFunSuite with CypherCompar
   test("should provide sensible error message for CREATE UNIQUE in newer runtimes") {
     val query = "MATCH (root { name: 'root' }) CREATE UNIQUE (root)-[:LOVES]-(someone) RETURN someone"
     failWithError(Configs.SlottedInterpreted + Configs.Compiled, query, Seq("The given query is not currently supported in the selected runtime"))
+  }
+
+  test("should give correct error message with invalid number literal in a subtract") {
+    a[SyntaxException] shouldBe thrownBy {
+      innerExecuteDeprecated("with [1a-1] as list return list", Map())
+    }
+  }
+
+  // Operations on incompatible types
+  test("should provide sensible error message when trying to add incompatible types") {
+    // We want to deliberately fail after semantic checking (at runtime), thus the need for CREATE
+
+    graph.execute("CREATE (n:Test {" +
+      "loc: point({x:22, y:44}), " +
+      "num: 2, dur: duration({ days: 1, hours: 12 }), " +
+      "dat: datetime('2015-07-21T21:40:32.142+0100'), " +
+      "bool: true, " +
+      "flo: 2.9 })")
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num + n.loc", List("Cannot add `Long` and `Point`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num + n.dur", List("Cannot add `Long` and `Duration`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num + n.dat", List("Cannot add `Long` and `DateTime`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.flo + n.bool", List("Cannot add `Double` and `Boolean`"))
+  }
+
+  test("should provide sensible error message when trying to multiply incompatible types") {
+    // We want to deliberately fail after semantic checking (at runtime), thus the need for CREATE
+
+    graph.execute("CREATE (n:Test {" +
+      "loc: point({x:22, y:44}), " +
+      "num: 2, dur: duration({ days: 1, hours: 12 }), " +
+      "dat: datetime('2015-07-21T21:40:32.142+0100'), " +
+      "bool: true, " +
+      "flo: 2.9," +
+      "lst: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], " +
+      "str: 's' })")
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num * n.loc", List("Cannot multiply `Long` and `Point`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num * n.dat", List("Cannot multiply `Long` and `DateTime`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.flo * n.bool", List("Cannot multiply `Double` and `Boolean`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.lst * n.str", List("Cannot multiply `LongArray` and `String`"))
+  }
+
+  test("should provide sensible error message when trying to subtract incompatible types") {
+    // We want to deliberately fail after semantic checking (at runtime), thus the need for CREATE
+
+    graph.execute("CREATE (n:Test {" +
+      "loc: point({x:22, y:44}), " +
+      "num: 2, dur: duration({ days: 1, hours: 12 }), " +
+      "dat: datetime('2015-07-21T21:40:32.142+0100'), " +
+      "bool: true, " +
+      "flo: 2.9," +
+      "lst: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], " +
+      "str: 's' })")
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num - n.loc", List("Cannot subtract `Point` from `Long`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num - n.dat", List("Cannot subtract `DateTime` from `Long`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.flo - n.bool", List("Cannot subtract `Boolean` from `Double`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.lst - n.str", List("Cannot subtract `String` from `LongArray`"))
+  }
+
+  test("should provide sensible error message when trying to calculate modulus of incompatible types") {
+    // We want to deliberately fail after semantic checking (at runtime), thus the need for CREATE
+
+    graph.execute("CREATE (n:Test {" +
+      "loc: point({x:22, y:44}), " +
+      "num: 2, dur: duration({ days: 1, hours: 12 }), " +
+      "dat: datetime('2015-07-21T21:40:32.142+0100'), " +
+      "bool: true, " +
+      "flo: 2.9," +
+      "lst: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], " +
+      "str: 's' })")
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num % n.loc", List("Cannot calculate modulus of `Long` and `Point`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num % n.dat", List("Cannot calculate modulus of `Long` and `DateTime`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.flo % n.bool", List("Cannot calculate modulus of `Double` and `Boolean`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.lst % n.str", List("Cannot calculate modulus of `LongArray` and `String`"))
+  }
+
+  test("should provide sensible error message when trying to divide incompatible types") {
+    // We want to deliberately fail after semantic checking (at runtime), thus the need for CREATE
+
+    graph.execute("CREATE (n:Test {" +
+      "loc: point({x:22, y:44}), " +
+      "num: 2, dur: duration({ days: 1, hours: 12 }), " +
+      "dat: datetime('2015-07-21T21:40:32.142+0100'), " +
+      "bool: true, " +
+      "flo: 2.9," +
+      "lst: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], " +
+      "str: 's' })")
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num / n.loc", List("Cannot divide `Long` by `Point`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num / n.dat", List("Cannot divide `Long` by `DateTime`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.flo / n.bool", List("Cannot divide `Double` by `Boolean`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.lst / n.str", List("Cannot divide `LongArray` by `String`"))
+  }
+
+  test("should provide sensible error message when trying to raise to the power of incompatible types") {
+    // We want to deliberately fail after semantic checking (at runtime), thus the need for CREATE
+
+    graph.execute("CREATE (n:Test {" +
+      "loc: point({x:22, y:44}), " +
+      "num: 2, dur: duration({ days: 1, hours: 12 }), " +
+      "dat: datetime('2015-07-21T21:40:32.142+0100'), " +
+      "bool: true, " +
+      "flo: 2.9," +
+      "lst: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], " +
+      "str: 's' })")
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Compiled - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num ^ n.loc", List("Cannot raise `Long` to the power of `Point`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Compiled - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.num ^ n.dat", List("Cannot raise `Long` to the power of `DateTime`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Compiled - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.flo ^ n.bool", List("Cannot raise `Double` to the power of `Boolean`"))
+
+    failWithError(Configs.AbsolutelyAll - Configs.AllRulePlanners - Configs.Compiled - Configs.Version3_1 - Configs.Version2_3,
+      "MATCH (n:Test) RETURN n.lst ^ n.str", List("Cannot raise `LongArray` to the power of `String`"))
   }
 }

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.function.Supplier;
 
 import org.neo4j.internal.kernel.api.exceptions.ProcedureException;
+import org.neo4j.internal.kernel.api.procs.DefaultParameterValue;
 import org.neo4j.internal.kernel.api.procs.FieldSignature;
 import org.neo4j.internal.kernel.api.procs.Neo4jTypes;
 import org.neo4j.internal.kernel.api.procs.QualifiedName;
@@ -37,12 +38,13 @@ import org.neo4j.kernel.api.exceptions.Status;
 import org.neo4j.kernel.api.proc.CallableUserFunction;
 import org.neo4j.kernel.api.proc.Context;
 import org.neo4j.kernel.api.proc.Key;
+import org.neo4j.kernel.impl.proc.ProcedureConfig;
 import org.neo4j.kernel.impl.proc.Procedures;
 import org.neo4j.procedure.Description;
 import org.neo4j.values.AnyValue;
-import org.neo4j.values.storable.IntegralValue;
 import org.neo4j.values.storable.TemporalValue;
 import org.neo4j.values.storable.TextValue;
+import org.neo4j.values.storable.Values;
 import org.neo4j.values.virtual.MapValue;
 
 import static java.util.Collections.singletonList;
@@ -54,19 +56,30 @@ import static org.neo4j.values.virtual.VirtualValues.EMPTY_MAP;
 
 public abstract class TemporalFunction<T extends AnyValue> implements CallableUserFunction
 {
-    public static void registerTemporalFunctions( Procedures procedures ) throws ProcedureException
+    private static final String DEFAULT_TEMPORAL_ARGUMENT = "DEFAULT_TEMPORAL_ARGUMENT";
+    private static final TextValue DEFAULT_TEMPORAL_ARGUMENT_VALUE = Values.stringValue( DEFAULT_TEMPORAL_ARGUMENT );
+    private static final DefaultParameterValue DEFAULT_PARAMETER_VALUE = new DefaultParameterValue( DEFAULT_TEMPORAL_ARGUMENT, Neo4jTypes.NTAny );
+
+    public static void registerTemporalFunctions( Procedures procedures, ProcedureConfig procedureConfig ) throws ProcedureException
     {
-        register( new DateTimeFunction(), procedures );
-        register( new LocalDateTimeFunction(), procedures );
-        register( new DateFunction(), procedures );
-        register( new TimeFunction(), procedures );
-        register( new LocalTimeFunction(), procedures );
+        Supplier<ZoneId> defaultZone = procedureConfig::getDefaultTemporalTimeZone;
+        register( new DateTimeFunction( defaultZone ), procedures );
+        register( new LocalDateTimeFunction( defaultZone ), procedures );
+        register( new DateFunction( defaultZone ), procedures );
+        register( new TimeFunction( defaultZone ), procedures );
+        register( new LocalTimeFunction( defaultZone ), procedures );
         DurationFunction.register( procedures );
     }
 
     private static final Key<Clock> DEFAULT_CLOCK = Context.STATEMENT_CLOCK;
 
-    protected abstract T now( Clock clock, String timezone );
+    /**
+     * @param clock the clock to use
+     * @param timezone an explicit timezone or {@code null}. In the latter case, the defaultZone is used
+     * @param defaultZone configured default time zone.
+     * @return the current time/date
+     */
+    protected abstract T now( Clock clock, String timezone, Supplier<ZoneId> defaultZone );
 
     protected abstract T parse( TextValue value, Supplier<ZoneId> defaultZone );
 
@@ -74,16 +87,15 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
 
     protected abstract T select( AnyValue from, Supplier<ZoneId> defaultZone );
 
-    protected abstract T positionalCreate( AnyValue[] input );
-
     protected abstract T truncate( TemporalUnit unit, TemporalValue input, MapValue fields, Supplier<ZoneId> defaultZone );
 
-    private static final List<FieldSignature> INPUT_SIGNATURE = singletonList( inputField(
-            "input", Neo4jTypes.NTAny, nullValue( Neo4jTypes.NTAny ) ) );
+    private static final List<FieldSignature> INPUT_SIGNATURE = singletonList( inputField( "input", Neo4jTypes.NTAny, DEFAULT_PARAMETER_VALUE ) );
     private static final String[] ALLOWED = {};
-    private final UserFunctionSignature signature;
 
-    TemporalFunction( Neo4jTypes.AnyType result )
+    private final UserFunctionSignature signature;
+    private final Supplier<ZoneId> defaultZone;
+
+    TemporalFunction( Neo4jTypes.AnyType result, Supplier<ZoneId> defaultZone )
     {
         String basename = basename( getClass() );
         assert result.getClass().getSimpleName().equals( basename + "Type" ) : "result type should match function name";
@@ -91,7 +103,8 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
         this.signature = new UserFunctionSignature(
                 new QualifiedName( new String[0], basename.toLowerCase() ),
                 INPUT_SIGNATURE, result, null, ALLOWED,
-                description == null ? null : description.value() );
+                description == null ? null : description.value(), true );
+        this.defaultZone = defaultZone;
     }
 
     private static void register( TemporalFunction<?> base, Procedures procedures ) throws ProcedureException
@@ -109,28 +122,6 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
         return function.getSimpleName().replace( "Function", "" );
     }
 
-    static int anInt( String name, AnyValue value )
-    {
-        if ( value instanceof IntegralValue )
-        {
-            long v = ((IntegralValue) value).longValue();
-            if ( v <= Integer.MAX_VALUE && v >= Integer.MIN_VALUE )
-            {
-                return (int) v;
-            }
-        }
-        throw new IllegalArgumentException( name + " should be an int, not: " + value );
-    }
-
-    static String aString( String name, AnyValue value )
-    {
-        if ( value instanceof TextValue )
-        {
-            return ((TextValue) value).stringValue();
-        }
-        throw new IllegalArgumentException( name + " should be a string, not: " + value );
-    }
-
     void registerMore( Procedures procedures ) throws ProcedureException
     {
         // Empty by default
@@ -143,23 +134,23 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
     }
 
     @Override
-    public final T apply( Context ctx, AnyValue[] input ) throws ProcedureException
+    public final AnyValue apply( Context ctx, AnyValue[] input ) throws ProcedureException
     {
-        if ( input == null || input.length == 0 || input[0] == NO_VALUE || input[0] == null )
+        if ( input == null || (input.length > 0 && (input[0] == NO_VALUE || input[0] == null)) )
         {
-            return now( ctx.get( DEFAULT_CLOCK ), null );
+            return NO_VALUE;
         }
-        else if ( input.length > 1 )
+        else if ( input.length == 0 || input[0].equals( DEFAULT_TEMPORAL_ARGUMENT_VALUE ) )
         {
-            return positionalCreate( input );
+            return now( ctx.get( DEFAULT_CLOCK ), null, defaultZone );
         }
         else if ( input[0] instanceof TextValue )
         {
-            return parse( (TextValue) input[0], defaultZone( ctx ) );
+            return parse( (TextValue) input[0], defaultZone );
         }
         else if ( input[0] instanceof TemporalValue )
         {
-            return select( input[0], defaultZone( ctx ) );
+            return select( input[0], defaultZone );
         }
         else if ( input[0] instanceof MapValue )
         {
@@ -167,20 +158,15 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
             String timezone = onlyTimezone( map );
             if ( timezone != null )
             {
-                return now( ctx.get( DEFAULT_CLOCK ), timezone );
+                return now( ctx.get( DEFAULT_CLOCK ), timezone, defaultZone );
             }
-            return build( map, defaultZone( ctx ) );
+            return build( map, defaultZone );
         }
         else
         {
-            throw new ProcedureException( Status.Procedure.ProcedureCallFailed, "Invalid call signature" );
+            throw new ProcedureException( Status.Procedure.ProcedureCallFailed, "Invalid call signature for " + getClass().getSimpleName() +
+                    ": Provided input was " + Arrays.toString( input ) );
         }
-    }
-
-    private static Supplier<ZoneId> defaultZone( Context ctx ) throws ProcedureException
-    {
-        Clock clock = ctx.get( DEFAULT_CLOCK );
-        return clock::getZone;
     }
 
     private static String onlyTimezone( MapValue map )
@@ -210,7 +196,7 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
             this.function = base;
             this.signature = new UserFunctionSignature(
                     new QualifiedName( new String[] {base.signature.name().name()}, name ),
-                    input, base.signature.outputType(), null, ALLOWED,  description  );
+                    input, base.signature.outputType(), null, ALLOWED,  description, true );
         }
 
         @Override
@@ -220,13 +206,12 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
         }
 
         @Override
-        public abstract T apply( Context ctx, AnyValue[] input ) throws ProcedureException;
+        public abstract AnyValue apply( Context ctx, AnyValue[] input ) throws ProcedureException;
     }
 
     private static class Now<T extends AnyValue> extends SubFunction<T>
     {
-        private static final List<FieldSignature> SIGNATURE = singletonList( inputField(
-                "timezone", Neo4jTypes.NTString, nullValue( Neo4jTypes.NTString ) ) );
+        private static final List<FieldSignature> SIGNATURE = singletonList( inputField( "timezone", Neo4jTypes.NTAny, DEFAULT_PARAMETER_VALUE ) );
         private final Key<Clock> key;
 
         Now( TemporalFunction<T> function, String clock )
@@ -251,21 +236,25 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
         }
 
         @Override
-        public T apply( Context ctx, AnyValue[] input ) throws ProcedureException
+        public AnyValue apply( Context ctx, AnyValue[] input ) throws ProcedureException
         {
-            if ( input == null || input.length == 0 ||
-                    ((input[0] == NO_VALUE || input[0] == null) && input.length == 1) )
+            if ( input == null || (input.length > 0 && (input[0] == NO_VALUE || input[0] == null)) )
             {
-                return function.now( ctx.get( key ), null );
+                return NO_VALUE;
+            }
+            else if ( input.length == 0 || input[0].equals( DEFAULT_TEMPORAL_ARGUMENT_VALUE ) )
+            {
+                return function.now( ctx.get( key ), null, function.defaultZone );
             }
             else if ( input.length == 1 && input[0] instanceof TextValue )
             {
                 TextValue timezone = (TextValue) input[0];
-                return function.now( ctx.get( key ), timezone.stringValue() );
+                return function.now( ctx.get( key ), timezone.stringValue(), function.defaultZone );
             }
             else
             {
-                throw new ProcedureException( Status.Procedure.ProcedureCallFailed, "Invalid call signature" );
+                throw new ProcedureException( Status.Procedure.ProcedureCallFailed, "Invalid call signature for " + getClass().getSimpleName() +
+                    ": Provided input was " + Arrays.toString( input ) );
             }
         }
     }
@@ -298,10 +287,11 @@ public abstract class TemporalFunction<T extends AnyValue> implements CallableUs
                             unit( ((TextValue) unit).stringValue() ),
                             (TemporalValue)input,
                             (MapValue) fields,
-                            defaultZone( ctx ) );
+                            function.defaultZone );
                 }
             }
-            throw new ProcedureException( Status.Procedure.ProcedureCallFailed, "Invalid call signature" );
+            throw new ProcedureException( Status.Procedure.ProcedureCallFailed, "Invalid call signature for " + getClass().getSimpleName() +
+                    ": Provided input was " + Arrays.toString( args ) );
         }
 
         private static TemporalUnit unit( String unit )

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -36,15 +36,15 @@ import static org.neo4j.internal.kernel.api.procs.Neo4jTypes.NTDate;
 @Description( "Create a Date instant." )
 class DateFunction extends TemporalFunction<DateValue>
 {
-    DateFunction()
+    DateFunction( Supplier<ZoneId> defaultZone )
     {
-        super( NTDate );
+        super( NTDate, defaultZone );
     }
 
     @Override
-    protected DateValue now( Clock clock, String timezone )
+    protected DateValue now( Clock clock, String timezone, Supplier<ZoneId> defaultZone )
     {
-        return timezone == null ? DateValue.now( clock ) : DateValue.now( clock, timezone );
+        return timezone == null ? DateValue.now( clock, defaultZone ) : DateValue.now( clock, timezone );
     }
 
     @Override
@@ -63,19 +63,6 @@ class DateFunction extends TemporalFunction<DateValue>
     protected DateValue select( AnyValue from, Supplier<ZoneId> defaultZone )
     {
         return DateValue.select( from, defaultZone );
-    }
-
-    @Override
-    protected DateValue positionalCreate( AnyValue[] input )
-    {
-        if ( input.length != 3 )
-        {
-            throw new IllegalArgumentException( "expected 3 arguments" );
-        }
-        return DateValue.date(
-                anInt( "year", input[0] ),
-                anInt( "month", input[1] ),
-                anInt( "day", input[2] ) );
     }
 
     @Override

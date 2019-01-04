@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.causalclustering.catchup.tx;
 
@@ -27,7 +30,7 @@ import java.util.function.Supplier;
 import org.neo4j.causalclustering.catchup.CatchUpClient;
 import org.neo4j.causalclustering.catchup.CatchUpClientException;
 import org.neo4j.causalclustering.catchup.CatchUpResponseAdaptor;
-import org.neo4j.causalclustering.catchup.CatchupAddressProvider;
+import org.neo4j.causalclustering.catchup.CatchupAddressProvider.SingleAddressProvider;
 import org.neo4j.causalclustering.catchup.storecopy.DatabaseShutdownException;
 import org.neo4j.causalclustering.catchup.storecopy.LocalDatabase;
 import org.neo4j.causalclustering.catchup.storecopy.StoreCopyFailedException;
@@ -37,6 +40,7 @@ import org.neo4j.causalclustering.core.consensus.schedule.TimerService;
 import org.neo4j.causalclustering.core.consensus.schedule.TimerService.TimerName;
 import org.neo4j.causalclustering.core.state.snapshot.TopologyLookupException;
 import org.neo4j.causalclustering.discovery.TopologyService;
+import org.neo4j.causalclustering.helper.Suspendable;
 import org.neo4j.causalclustering.identity.MemberId;
 import org.neo4j.causalclustering.identity.StoreId;
 import org.neo4j.causalclustering.upstream.UpstreamDatabaseSelectionException;
@@ -44,7 +48,6 @@ import org.neo4j.causalclustering.upstream.UpstreamDatabaseStrategySelector;
 import org.neo4j.helpers.AdvertisedSocketAddress;
 import org.neo4j.kernel.impl.transaction.CommittedTransactionRepresentation;
 import org.neo4j.kernel.internal.DatabaseHealth;
-import org.neo4j.kernel.lifecycle.Lifecycle;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.kernel.monitoring.Monitors;
 import org.neo4j.logging.Log;
@@ -86,11 +89,11 @@ public class CatchupPollingProcess extends LifecycleAdapter
 
     private final LocalDatabase localDatabase;
     private final Log log;
-    private final Lifecycle startStopOnStoreCopy;
+    private final Suspendable enableDisableOnStoreCopy;
     private final StoreCopyProcess storeCopyProcess;
     private final Supplier<DatabaseHealth> databaseHealthSupplier;
     private final CatchUpClient catchUpClient;
-    private final UpstreamDatabaseStrategySelector selectionStrategyPipeline;
+    private final UpstreamDatabaseStrategySelector selectionStrategy;
     private final TimerService timerService;
     private final long txPullIntervalMillis;
     private final BatchingTxApplier applier;
@@ -103,16 +106,17 @@ public class CatchupPollingProcess extends LifecycleAdapter
     private CompletableFuture<Boolean> upToDateFuture; // we are up-to-date when we are successfully pulling
     private volatile long latestTxIdOfUpStream;
 
-    public CatchupPollingProcess( LogProvider logProvider, LocalDatabase localDatabase, Lifecycle startStopOnStoreCopy, CatchUpClient catchUpClient,
-            UpstreamDatabaseStrategySelector selectionStrategy, TimerService timerService, long txPullIntervalMillis, BatchingTxApplier applier,
-            Monitors monitors, StoreCopyProcess storeCopyProcess, Supplier<DatabaseHealth> databaseHealthSupplier, TopologyService topologyService )
+    public CatchupPollingProcess( LogProvider logProvider, LocalDatabase localDatabase, Suspendable enableDisableOnSoreCopy, CatchUpClient catchUpClient,
+                                  UpstreamDatabaseStrategySelector selectionStrategy, TimerService timerService, long txPullIntervalMillis,
+                                  BatchingTxApplier applier, Monitors monitors, StoreCopyProcess storeCopyProcess,
+                                  Supplier<DatabaseHealth> databaseHealthSupplier, TopologyService topologyService )
 
     {
         this.localDatabase = localDatabase;
         this.log = logProvider.getLog( getClass() );
-        this.startStopOnStoreCopy = startStopOnStoreCopy;
+        this.enableDisableOnStoreCopy = enableDisableOnSoreCopy;
         this.catchUpClient = catchUpClient;
-        this.selectionStrategyPipeline = selectionStrategy;
+        this.selectionStrategy = selectionStrategy;
         this.timerService = timerService;
         this.txPullIntervalMillis = txPullIntervalMillis;
         this.applier = applier;
@@ -194,7 +198,7 @@ public class CatchupPollingProcess extends LifecycleAdapter
         MemberId upstream;
         try
         {
-            upstream = selectionStrategyPipeline.bestUpstreamDatabase();
+            upstream = selectionStrategy.bestUpstreamDatabase();
         }
         catch ( UpstreamDatabaseSelectionException e )
         {
@@ -312,7 +316,7 @@ public class CatchupPollingProcess extends LifecycleAdapter
         try
         {
             localDatabase.stopForStoreCopy();
-            startStopOnStoreCopy.stop();
+            enableDisableOnStoreCopy.disable();
         }
         catch ( Throwable throwable )
         {
@@ -321,11 +325,11 @@ public class CatchupPollingProcess extends LifecycleAdapter
 
         try
         {
-            CatchupAddressProvider.UpstreamStrategyBoundAddressProvider upstreamStrategyBoundAddressProvider =
-                    new CatchupAddressProvider.UpstreamStrategyBoundAddressProvider( topologyService, selectionStrategyPipeline );
-            storeCopyProcess.replaceWithStoreFrom( upstreamStrategyBoundAddressProvider, localStoreId );
+            MemberId source = selectionStrategy.bestUpstreamDatabase();
+            AdvertisedSocketAddress fromAddress = topologyService.findCatchupAddress( source ).orElseThrow( () -> new TopologyLookupException( source ) );
+            storeCopyProcess.replaceWithStoreFrom( new SingleAddressProvider( fromAddress ), localStoreId );
         }
-        catch ( IOException | StoreCopyFailedException e )
+        catch ( IOException | StoreCopyFailedException | UpstreamDatabaseSelectionException | TopologyLookupException e )
         {
             log.warn( "Error copying store. Will retry shortly.", e );
             return;
@@ -339,7 +343,7 @@ public class CatchupPollingProcess extends LifecycleAdapter
         try
         {
             localDatabase.start();
-            startStopOnStoreCopy.start();
+            enableDisableOnStoreCopy.enable();
         }
         catch ( Throwable throwable )
         {

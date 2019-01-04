@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 import org.neo4j.helpers.Exceptions;
 import org.neo4j.scheduler.JobSchedulerAdapter;
@@ -42,8 +43,8 @@ public class GroupingRecoveryCleanupWorkCollectorTest
     public void mustNotScheduleAnyJobsBeforeStart()
     {
         // given
-        List<CleanupJob> allRuns = new ArrayList<>();
-        List<CleanupJob> expectedJobs = someJobs( allRuns );
+        List<DummyJob> allRuns = new ArrayList<>();
+        List<DummyJob> expectedJobs = someJobs( allRuns );
 
         // when
         collector.init();
@@ -57,8 +58,8 @@ public class GroupingRecoveryCleanupWorkCollectorTest
     public void mustScheduleAllJobs()
     {
         // given
-        List<CleanupJob> allRuns = new ArrayList<>();
-        List<CleanupJob> expectedJobs = someJobs( allRuns );
+        List<DummyJob> allRuns = new ArrayList<>();
+        List<DummyJob> expectedJobs = someJobs( allRuns );
 
         // when
         collector.init();
@@ -70,28 +71,51 @@ public class GroupingRecoveryCleanupWorkCollectorTest
     }
 
     @Test
-    public void mustNotScheduleOldJobsAfterRestart()
+    public void mustThrowIfOldJobsDuringInit()
     {
         // given
-        List<CleanupJob> allRuns = new ArrayList<>();
-        List<CleanupJob> someJobs = someJobs( allRuns );
+        List<DummyJob> allRuns = new ArrayList<>();
+        List<DummyJob> someJobs = someJobs( allRuns );
+
+        // when
+        addAll( someJobs );
+        try
+        {
+            collector.init();
+            fail( "Should have failed" );
+        }
+        catch ( IllegalStateException e )
+        {
+            // then
+        }
+    }
+
+    @Test
+    public void mustCloseOldJobsOnShutdown()
+    {
+        // given
+        List<DummyJob> allRuns = new ArrayList<>();
+        List<DummyJob> someJobs = someJobs( allRuns );
 
         // when
         collector.init();
         addAll( someJobs );
-        collector.init();
-        collector.start();
+        collector.shutdown();
 
         // then
-        assertTrue( allRuns.isEmpty() );
+        assertTrue( "Expected no jobs to run", allRuns.isEmpty() );
+        for ( DummyJob job : someJobs )
+        {
+            assertTrue( "Expected all jobs to be closed", job.isClosed() );
+        }
     }
 
     @Test
     public void mustNotScheduleOldJobsOnMultipleStart()
     {
         // given
-        List<CleanupJob> allRuns = new ArrayList<>();
-        List<CleanupJob> expectedJobs = someJobs( allRuns );
+        List<DummyJob> allRuns = new ArrayList<>();
+        List<DummyJob> expectedJobs = someJobs( allRuns );
 
         // when
         collector.init();
@@ -107,8 +131,8 @@ public class GroupingRecoveryCleanupWorkCollectorTest
     public void mustNotScheduleOldJobsOnStartStopStart() throws Throwable
     {
         // given
-        List<CleanupJob> allRuns = new ArrayList<>();
-        List<CleanupJob> expectedJobs = someJobs( allRuns );
+        List<DummyJob> allRuns = new ArrayList<>();
+        List<DummyJob> expectedJobs = someJobs( allRuns );
 
         // when
         collector.init();
@@ -124,13 +148,13 @@ public class GroupingRecoveryCleanupWorkCollectorTest
     @Test
     public void executeAllTheJobsWhenSeparateJobFails()
     {
-        List<CleanupJob> allRuns = new ArrayList<>();
+        List<DummyJob> allRuns = new ArrayList<>();
         collector.init();
 
         DummyJob firstJob = new DummyJob( "first", allRuns );
         DummyJob thirdJob = new DummyJob( "third", allRuns );
         DummyJob fourthJob = new DummyJob( "fourth", allRuns );
-        List<CleanupJob> expectedJobs = Arrays.asList( firstJob, thirdJob, fourthJob );
+        List<DummyJob> expectedJobs = Arrays.asList( firstJob, thirdJob, fourthJob );
 
         collector.add( firstJob );
         collector.add( new EvilJob() );
@@ -167,18 +191,18 @@ public class GroupingRecoveryCleanupWorkCollectorTest
         }
     }
 
-    private void addAll( Collection<CleanupJob> jobs )
+    private void addAll( Collection<DummyJob> jobs )
     {
         jobs.forEach( collector::add );
     }
 
-    private void assertSame( List<CleanupJob> someJobs, List<CleanupJob> actual )
+    private void assertSame( List<DummyJob> someJobs, List<DummyJob> actual )
     {
         assertTrue( actual.containsAll( someJobs ) );
         assertTrue( someJobs.containsAll( actual ) );
     }
 
-    private List<CleanupJob> someJobs( List<CleanupJob> allRuns )
+    private List<DummyJob> someJobs( List<DummyJob> allRuns )
     {
         return new ArrayList<>( Arrays.asList(
                 new DummyJob( "A", allRuns ),
@@ -213,7 +237,7 @@ public class GroupingRecoveryCleanupWorkCollectorTest
         }
 
         @Override
-        public Exception getCause()
+        public Throwable getCause()
         {
             return null;
         }
@@ -225,7 +249,7 @@ public class GroupingRecoveryCleanupWorkCollectorTest
         }
 
         @Override
-        public void run()
+        public void run( ExecutorService executor )
         {
             throw new RuntimeException( "Resilient to run attempts" );
         }
@@ -234,9 +258,10 @@ public class GroupingRecoveryCleanupWorkCollectorTest
     private class DummyJob implements CleanupJob
     {
         private final String name;
-        private final List<CleanupJob> allRuns;
+        private final List<DummyJob> allRuns;
+        private boolean closed;
 
-        DummyJob( String name, List<CleanupJob> allRuns )
+        DummyJob( String name, List<DummyJob> allRuns )
         {
             this.name = name;
             this.allRuns = allRuns;
@@ -261,20 +286,26 @@ public class GroupingRecoveryCleanupWorkCollectorTest
         }
 
         @Override
-        public Exception getCause()
+        public Throwable getCause()
         {
             return null;
         }
 
         @Override
         public void close()
-        {   // no-op
+        {
+            closed = true;
         }
 
         @Override
-        public void run()
+        public void run( ExecutorService executor )
         {
             allRuns.add( this );
+        }
+
+        public boolean isClosed()
+        {
+            return closed;
         }
     }
 }

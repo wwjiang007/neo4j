@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -212,5 +215,40 @@ class PeriodicCommitAcceptanceTest extends ExecutionEngineFunSuite
 
     // then
     e.getMessage should include("on line 3. Possibly the last row committed during import is line 2. Note that this information might not be accurate.")
+  }
+
+  test("should read committed properties in later transactions") {
+
+    val csvFile = """name,flows,kbytes
+                    |a,1,10.0
+                    |b,1,10.0
+                    |c,1,10.0
+                    |d,1,10.0
+                    |e,1,10.0
+                    |f,1,10.0""".stripMargin
+
+    val url = createFile(writer => writer.print(csvFile))
+
+    val query = s"""CYPHER runtime=interpreted USING PERIODIC COMMIT 2 LOAD CSV WITH HEADERS FROM '$url' AS row
+                  |MERGE (n {name: row.name})
+                  |ON CREATE SET
+                  |n.flows = toInt(row.flows),
+                  |n.kbytes = toFloat(row.kbytes)
+                  |
+                  |ON MATCH SET
+                  |n.flows = n.flows + toInt(row.flows),
+                  |n.kbytes = n.kbytes + toFloat(row.kbytes)""".stripMargin
+
+    def nodesWithFlow(i: Int) = s"MATCH (n {flows: $i}) RETURN count(*)"
+
+    // Given
+    execute(query)
+    executeScalar[Int](nodesWithFlow(1)) should be(6)
+
+    // When
+    execute(query)
+
+    // Then
+    executeScalar[Int](nodesWithFlow(2)) should be(6)
   }
 }

@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.internal.cypher.acceptance
 
@@ -31,7 +34,7 @@ class StartPointFindingAcceptanceTest extends ExecutionEngineFunSuite with Cyphe
     createNode("a")
     val node = createNode("b")
 
-    val result =executeWith(Configs.All + Configs.Morsel,
+    val result =executeWith(Configs.All,
       s"match (n) where ${node.getId} = id(n) return n")
     result.columnAs[Node]("n").toList should equal(List(node))
 
@@ -41,7 +44,7 @@ class StartPointFindingAcceptanceTest extends ExecutionEngineFunSuite with Cyphe
     createNode("a")
     val node = createNode("b")
 
-    val result = executeWith(Configs.All + Configs.Morsel,
+    val result = executeWith(Configs.All,
       s"match (n) where id(n) = ${node.getId} return n")
     result.columnAs[Node]("n").toList should equal(List(node))
   }
@@ -51,7 +54,7 @@ class StartPointFindingAcceptanceTest extends ExecutionEngineFunSuite with Cyphe
     val n1= createNode("b")
     val n2 = createNode("c")
 
-    val result = executeWith(Configs.Interpreted + Configs.Morsel, s"match (n) where id(n) IN [${n1.getId}, ${n2.getId}] return n")
+    val result = executeWith(Configs.Interpreted, s"match (n) where id(n) IN [${n1.getId}, ${n2.getId}] return n")
     result.columnAs("n").toList should equal(Seq(n1, n2))
   }
 
@@ -90,7 +93,7 @@ class StartPointFindingAcceptanceTest extends ExecutionEngineFunSuite with Cyphe
     val rel1 = relate(createNode("a"), createNode("b"))
     val rel2 = relate(createNode("c"), createNode("d"))
 
-    val result = executeWith(Configs.Interpreted + Configs.Morsel, s"match ()-[r]->() where id(r) IN [${rel1.getId}, ${rel2.getId}] return r")
+    val result = executeWith(Configs.Interpreted, s"match ()-[r]->() where id(r) IN [${rel1.getId}, ${rel2.getId}] return r")
     result.columnAs("r").toList should equal(Seq(rel1, rel2))
   }
 

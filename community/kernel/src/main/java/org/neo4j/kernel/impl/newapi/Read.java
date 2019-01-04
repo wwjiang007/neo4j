@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
  *
@@ -114,6 +114,19 @@ abstract class Read implements TxStateHolder,
         cursorImpl.setRead( this, null );
         IndexProgressor.NodeValueClient target = withFullValuePrecision( cursorImpl, query, reader );
         reader.query( target, indexOrder, query );
+    }
+
+    @Override
+    public void nodeIndexDistinctValues( IndexReference index, NodeValueIndexCursor cursor ) throws IndexNotFoundKernelException
+    {
+        ktx.assertOpen();
+        DefaultNodeValueIndexCursor cursorImpl = (DefaultNodeValueIndexCursor) cursor;
+        IndexReader reader = indexReader( index, true );
+        cursorImpl.setRead( this, null );
+        try ( CursorPropertyAccessor accessor = new CursorPropertyAccessor( cursors.allocateNodeCursor(), cursors.allocatePropertyCursor(), this ) )
+        {
+            reader.distinctValues( cursorImpl, accessor );
+        }
     }
 
     private IndexProgressor.NodeValueClient withFullValuePrecision( DefaultNodeValueIndexCursor cursor,

@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.server.security.enterprise.auth;
 
@@ -47,7 +50,6 @@ import javax.naming.directory.Attributes;
 import javax.naming.directory.SearchResult;
 import javax.naming.ldap.LdapContext;
 
-import org.neo4j.graphdb.security.AuthProviderFailedException;
 import org.neo4j.kernel.configuration.Config;
 import org.neo4j.server.security.enterprise.configuration.SecuritySettings;
 import org.neo4j.server.security.enterprise.log.SecurityLog;
@@ -56,6 +58,7 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.hasItems;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -69,8 +72,8 @@ import static org.neo4j.test.assertion.Assert.assertException;
 public class LdapRealmTest
 {
     Config config = mock( Config.class );
-    SecurityLog securityLog = mock( SecurityLog.class );
-    SecureHasher secureHasher = new SecureHasher();
+    private SecurityLog securityLog = mock( SecurityLog.class );
+    private SecureHasher secureHasher = new SecureHasher();
 
     @Rule
     public ExpectedException expectedException = ExpectedException.none();
@@ -439,11 +442,11 @@ public class LdapRealmTest
         when( jndiLdapContectFactory.getUrl() ).thenReturn( "ldap://myserver.org:12345" );
 
         // When
-        assertException( () -> realm.doGetAuthorizationInfo( new SimplePrincipalCollection( "olivia", "LdapRealm" ) ),
-                AuthProviderFailedException.class );
+        AuthorizationInfo info = realm.doGetAuthorizationInfo( new SimplePrincipalCollection( "olivia", "LdapRealm" ) );
 
         // Then
-        verify( securityLog ).error( contains( "{LdapRealm}: Failed to get authorization info: " +
+        assertNull( info );
+        verify( securityLog ).warn( contains( "{LdapRealm}: Failed to get authorization info: " +
                 "'LDAP naming error while attempting to retrieve authorization for user [olivia].'" +
                 " caused by 'Simulated failure'"
         ) );

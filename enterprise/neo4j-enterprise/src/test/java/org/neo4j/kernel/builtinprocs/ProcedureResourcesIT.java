@@ -1,21 +1,24 @@
 /*
- * Copyright (c) 2002-2018 "Neo Technology,"
- * Network Engine for Objects in Lund AB [http://neotechnology.com]
+ * Copyright (c) 2002-2018 "Neo4j,"
+ * Neo4j Sweden AB [http://neo4j.com]
  *
- * This file is part of Neo4j.
- *
- * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
+ * This file is part of Neo4j Enterprise Edition. The included source
+ * code can be redistributed and/or modified under the terms of the
+ * GNU AFFERO GENERAL PUBLIC LICENSE Version 3
+ * (http://www.fsf.org/licensing/licenses/agpl-3.0.html) with the
+ * Commons Clause, as found in the associated LICENSE.txt file.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * Neo4j object code can be licensed independently from the source
+ * under separate terms from the AGPL. Inquiries can be directed to:
+ * licensing@neo4j.com
+ *
+ * More information is also available at:
+ * https://neo4j.com/licensing/
  */
 package org.neo4j.kernel.builtinprocs;
 
@@ -108,6 +111,10 @@ public class ProcedureResourcesIT
 
     private void verifyProcedureCloseAllAcquiredKernelStatements( ProcedureData proc ) throws ExecutionException, InterruptedException
     {
+        if ( proc.skip )
+        {
+            return;
+        }
         String failureMessage = "Failed on procedure " + proc.name;
         try ( Transaction outer = db.beginTx() )
         {
@@ -173,6 +180,7 @@ public class ProcedureResourcesIT
         private final List<Object> params = new ArrayList<>();
         private String setupQuery;
         private String postQuery;
+        private boolean skip;
 
         private ProcedureData( ProcedureSignature procedure )
         {
@@ -346,6 +354,18 @@ public class ProcedureResourcesIT
         case "dbms.setConfigValue":
             proc.withParam( "'dbms.logs.query.enabled'" );
             proc.withParam( "'false'" );
+            break;
+        case "db.createIndex":
+            proc.withParam( "':Person(name)'" );
+            proc.withParam( "'lucene+native-2.0'" );
+            break;
+        case "db.createNodeKey":
+            // Grabs schema lock an so can not execute concurrently with node creation
+            proc.skip = true;
+            break;
+        case "db.createUniquePropertyConstraint":
+            // Grabs schema lock an so can not execute concurrently with node creation
+            proc.skip = true;
             break;
         default:
         }
