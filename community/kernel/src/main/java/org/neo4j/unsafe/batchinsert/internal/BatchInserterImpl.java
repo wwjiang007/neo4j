@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -301,7 +301,7 @@ public class BatchInserterImpl implements BatchInserter, IndexConfigStoreProvide
         IndexProvider provider = extensions.resolveDependency( IndexProvider.class,
                 HighestSelectionStrategy.INSTANCE );
         schemaIndexProviders = new DefaultIndexProviderMap( provider );
-        labelScanStore = new NativeLabelScanStore( pageCache, storeDir, FullStoreChangeStream.EMPTY, false, new Monitors(),
+        labelScanStore = new NativeLabelScanStore( pageCache, fileSystem, storeDir, FullStoreChangeStream.EMPTY, false, new Monitors(),
                 deps.resolveDependency( RecoveryCleanupWorkCollector.class ) );
         life.add( labelScanStore );
         actions = new BatchSchemaActions();

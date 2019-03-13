@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -81,6 +81,7 @@ public class ReplicatedTokenStateMachine<TOKEN extends Token> implements StateMa
     {
         if ( commandIndex <= lastCommittedIndex )
         {
+            log.warn( format( "Ignored %s because already committed (%d <= %d).", tokenRequest, commandIndex, lastCommittedIndex ) );
             return;
         }
 
@@ -91,6 +92,7 @@ public class ReplicatedTokenStateMachine<TOKEN extends Token> implements StateMa
 
         if ( existingTokenId == null )
         {
+            log.info( format( "Applying %s with newTokenId=%d", tokenRequest, newTokenId ) );
             applyToStore( commands, commandIndex );
             tokenRegistry.addToken( tokenFactory.newToken( tokenRequest.tokenName(), newTokenId ) );
             callback.accept( Result.of( newTokenId ) );

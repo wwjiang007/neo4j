@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -36,6 +36,7 @@ import org.neo4j.index.internal.gbptree.Hit;
 import org.neo4j.index.internal.gbptree.Layout;
 import org.neo4j.index.internal.gbptree.MetadataMismatchException;
 import org.neo4j.index.internal.gbptree.RecoveryCleanupWorkCollector;
+import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.pagecache.IOLimiter;
 import org.neo4j.io.pagecache.PageCache;
 import org.neo4j.io.pagecache.PageCursor;
@@ -124,6 +125,16 @@ public class NativeLabelScanStore implements LabelScanStore
     private final FullStoreChangeStream fullStoreChangeStream;
 
     /**
+     * {@link FileSystemAbstraction} the backing file lives on.
+     */
+    private final FileSystemAbstraction fs;
+
+    /**
+     * Directory of the store to place the backing file in.
+     */
+    private final File storeDir;
+
+    /**
      * Page size to use for each tree node in {@link GBPTree}. Passed to {@link GBPTree}.
      */
     private final int pageSize;
@@ -153,7 +164,12 @@ public class NativeLabelScanStore implements LabelScanStore
     /**
      * The single instance of {@link NativeLabelScanWriter} used for updates.
      */
-    private final NativeLabelScanWriter singleWriter;
+    private NativeLabelScanWriter singleWriter;
+
+    /**
+     * Monitor for all writes going into this label scan store.
+     */
+    private NativeLabelScanWriter.WriteMonitor writeMonitor;
 
     /**
      * Write rebuilding bit to header.
@@ -166,25 +182,26 @@ public class NativeLabelScanStore implements LabelScanStore
      */
     private static final Consumer<PageCursor> writeClean = pageCursor -> pageCursor.putByte( CLEAN );
 
-    public NativeLabelScanStore( PageCache pageCache, File storeDir, FullStoreChangeStream fullStoreChangeStream,
+    public NativeLabelScanStore( PageCache pageCache, FileSystemAbstraction fs, File storeDir, FullStoreChangeStream fullStoreChangeStream,
             boolean readOnly, Monitors monitors, RecoveryCleanupWorkCollector recoveryCleanupWorkCollector )
     {
-        this( pageCache, storeDir, fullStoreChangeStream, readOnly, monitors, recoveryCleanupWorkCollector,
+        this( pageCache, fs, storeDir, fullStoreChangeStream, readOnly, monitors, recoveryCleanupWorkCollector,
                 /*means no opinion about page size*/ 0 );
     }
 
     /*
      * Test access to be able to control page size.
      */
-    NativeLabelScanStore( PageCache pageCache, File storeDir,
+    NativeLabelScanStore( PageCache pageCache, FileSystemAbstraction fs, File storeDir,
                 FullStoreChangeStream fullStoreChangeStream, boolean readOnly, Monitors monitors,
                 RecoveryCleanupWorkCollector recoveryCleanupWorkCollector, int pageSize )
     {
         this.pageCache = pageCache;
+        this.fs = fs;
         this.pageSize = pageSize;
         this.fullStoreChangeStream = fullStoreChangeStream;
+        this.storeDir = storeDir;
         this.storeFile = getLabelScanStoreFile( storeDir );
-        this.singleWriter = new NativeLabelScanWriter( 1_000 );
         this.readOnly = readOnly;
         this.monitors = monitors;
         this.monitor = monitors.newMonitor( Monitor.class );
@@ -255,6 +272,7 @@ public class NativeLabelScanStore implements LabelScanStore
         try
         {
             index.checkpoint( limiter );
+            writeMonitor.force();
         }
         catch ( IOException e )
         {
@@ -332,6 +350,9 @@ public class NativeLabelScanStore implements LabelScanStore
             // GBPTree is corrupt. Try to rebuild.
             isDirty = true;
         }
+
+        writeMonitor = LabelScanWriteMonitor.ENABLED ? new LabelScanWriteMonitor( fs, storeDir ) : NativeLabelScanWriter.EMPTY;
+        singleWriter = new NativeLabelScanWriter( 1_000, writeMonitor );
 
         if ( isDirty )
         {
@@ -460,6 +481,7 @@ public class NativeLabelScanStore implements LabelScanStore
         {
             index.close();
             index = null;
+            writeMonitor.close();
         }
     }
 

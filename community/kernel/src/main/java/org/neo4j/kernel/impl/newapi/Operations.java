@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -27,7 +27,6 @@ import java.util.Iterator;
 import java.util.Map;
 
 import org.neo4j.helpers.collection.CastingIterator;
-import org.neo4j.helpers.collection.Iterators;
 import org.neo4j.internal.kernel.api.CapableIndexReference;
 import org.neo4j.internal.kernel.api.CursorFactory;
 import org.neo4j.internal.kernel.api.ExplicitIndexRead;
@@ -98,7 +97,6 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static org.neo4j.internal.kernel.api.exceptions.schema.ConstraintValidationException.Phase.VALIDATION;
 import static org.neo4j.internal.kernel.api.exceptions.schema.SchemaKernelException.OperationContext.CONSTRAINT_CREATION;
-import static org.neo4j.internal.kernel.api.schema.SchemaDescriptorPredicates.hasProperty;
 import static org.neo4j.kernel.api.StatementConstants.NO_SUCH_NODE;
 import static org.neo4j.kernel.api.StatementConstants.NO_SUCH_PROPERTY_KEY;
 import static org.neo4j.kernel.api.schema.index.SchemaIndexDescriptor.Type.UNIQUE;
@@ -418,9 +416,11 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
             IndexQuery.ExactPredicate[] propertyValues, long modifiedNode
     ) throws UniquePropertyValueValidationException, UnableToValidateConstraintException
     {
-        try ( DefaultNodeValueIndexCursor valueCursor = cursors.allocateNodeValueIndexCursor() )
+        SchemaIndexDescriptor schemaIndexDescriptor = constraint.ownedIndexDescriptor();
+        CapableIndexReference indexReference = allStoreHolder.indexGetCapability( schemaIndexDescriptor );
+        try ( DefaultNodeValueIndexCursor valueCursor = cursors.allocateNodeValueIndexCursor();
+                IndexReaders indexReaders = new IndexReaders( indexReference, allStoreHolder ) )
         {
-            SchemaIndexDescriptor schemaIndexDescriptor = constraint.ownedIndexDescriptor();
             assertIndexOnline( schemaIndexDescriptor );
             int labelId = schemaIndexDescriptor.schema().keyId();
 
@@ -430,8 +430,7 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
                     indexEntryResourceId( labelId, propertyValues )
             );
 
-            allStoreHolder.nodeIndexSeekWithFreshIndexReader(
-                    allStoreHolder.indexGetCapability( schemaIndexDescriptor ), valueCursor, propertyValues );
+            allStoreHolder.nodeIndexSeekWithFreshIndexReader( valueCursor, indexReaders.createReader(), propertyValues );
             if ( valueCursor.next() && valueCursor.nodeReference() != modifiedNode )
             {
                 throw new UniquePropertyValueValidationException( constraint, VALIDATION,
@@ -518,10 +517,11 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         }
         else
         {
+            // We need to auto-index even if not actually changing the value.
+            autoIndexing.nodes().propertyChanged( this, node, propertyKey, existingValue, value );
             if ( propertyHasChanged( value, existingValue ) )
             {
                 //the value has changed to a new value
-                autoIndexing.nodes().propertyChanged( this, node, propertyKey, existingValue, value );
                 ktx.txState().nodeDoChangeProperty( node, propertyKey, existingValue, value );
                 updater.onPropertyChange( nodeCursor, propertyCursor, propertyKey, existingValue, value );
             }
@@ -565,9 +565,10 @@ public class Operations implements Write, ExplicitIndexWrite, SchemaWrite
         }
         else
         {
+            // We need to auto-index even if not actually changing the value.
+            autoIndexing.relationships().propertyChanged( this, relationship, propertyKey, existingValue, value );
             if ( propertyHasChanged( existingValue, value ) )
             {
-                autoIndexing.relationships().propertyChanged( this, relationship, propertyKey, existingValue, value );
 
                 ktx.txState().relationshipDoReplaceProperty( relationship, propertyKey, existingValue, value );
             }

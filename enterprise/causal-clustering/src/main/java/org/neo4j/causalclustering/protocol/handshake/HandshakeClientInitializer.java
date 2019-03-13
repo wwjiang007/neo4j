@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -81,8 +81,6 @@ public class HandshakeClientInitializer extends ChannelInitializer<SocketChannel
     {
         HandshakeClient handshakeClient = new HandshakeClient();
         installHandlers( channel, handshakeClient );
-
-        log.info( "Scheduling handshake (and timeout) local %s remote %s", channel.localAddress(), channel.remoteAddress() );
 
         scheduleHandshake( channel, handshakeClient, handshakeDelay.newTimeout() );
         scheduleTimeout( channel, handshakeClient );

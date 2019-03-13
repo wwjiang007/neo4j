@@ -5,7 +5,7 @@
 
   <groupId>org.neo4j</groupId>
   <artifactId>parent</artifactId>
-  <version>3.4.12-SNAPSHOT</version>
+  <version>3.4.13-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Neo4j</name>
   <description>Neo4j Graph Database</description>
@@ -51,7 +51,7 @@
     <system>GitHub</system>
     <url>https://github.com/neo4j/neo4j/issues</url>
   </issueManagement>
-  
+
   <distributionManagement>
     <repository>
       <id>sonatype-nexus-staging</id>
@@ -95,7 +95,7 @@
     <scala.target.vm>1.8</scala.target.vm>
     <scala.java.additional.args/>
     <jersey.version>1.19.3</jersey.version>
-    <currentYear>2018</currentYear>
+    <currentYear>2019</currentYear>
     <cypher.compatibility.23>2.3.12</cypher.compatibility.23>
     <cypher.compatibility.31>3.1.9</cypher.compatibility.31>
     <cypher.compatibility.33>3.3.9</cypher.compatibility.33>
@@ -152,8 +152,6 @@
         </includes>
       </testResource>
     </testResources>
-
-    <!-- Plugin definitions -->
     <pluginManagement>
       <plugins>
 
@@ -1200,13 +1198,7 @@
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-compress</artifactId>
-        <version>1.16.1</version>
-        <exclusions>
-          <exclusion>
-            <groupId>org.objenesis</groupId>
-            <artifactId>objenesis</artifactId>
-          </exclusion>
-        </exclusions>
+        <version>1.18</version>
       </dependency>
 
       <!-- Netty is used by three components: Com, Cluster and Bolt Socket Transport.

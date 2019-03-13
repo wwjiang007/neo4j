@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -65,7 +65,7 @@ public class NativeLabelScanStoreTest extends LabelScanStoreTest
             FullStoreChangeStream fullStoreChangeStream, boolean readOnly, Monitors monitors )
     {
         PageCache pageCache = pageCacheRule.getPageCache( fileSystemAbstraction );
-        return new NativeLabelScanStore( pageCache, rootFolder,
+        return new NativeLabelScanStore( pageCache, fileSystemAbstraction, rootFolder,
                 fullStoreChangeStream, readOnly, monitors, RecoveryCleanupWorkCollector.immediate() );
     }
 

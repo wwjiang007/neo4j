@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -335,7 +335,7 @@ public class GBPTree<KEY,VALUE> implements Closeable
     /**
      * Catchup for {@link SeekCursor} to become aware of new roots since it started.
      */
-    private final Supplier<Root> rootCatchup = () -> root;
+    private final Supplier<RootCatchup> rootCatchupSupplier = () -> new TripCountingRootCatchup( () -> root );
 
     /**
      * Supplier of generation to readers. This supplier will actually very rarely be used, because normally
@@ -856,7 +856,7 @@ public class GBPTree<KEY,VALUE> implements Closeable
 
         // Returns cursor which is now initiated with left-most leaf node for the specified range
         return new SeekCursor<>( cursor, bTreeNode, fromInclusive, toExclusive, layout,
-                stableGeneration, unstableGeneration, generationSupplier, rootCatchup, rootGeneration,
+                stableGeneration, unstableGeneration, generationSupplier, rootCatchupSupplier.get(), rootGeneration,
                 exceptionDecorator, SeekCursor.DEFAULT_MAX_READ_AHEAD );
     }
 

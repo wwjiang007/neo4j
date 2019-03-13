@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -84,7 +84,7 @@ public class NativeLabelScanStoreRebuildTest
         monitors.addMonitorListener( monitor );
 
         NativeLabelScanStore nativeLabelScanStore =
-                new NativeLabelScanStore( pageCache, storeDir, EMPTY, false, monitors, immediate() );
+                new NativeLabelScanStore( pageCache, fileSystemRule, storeDir, EMPTY, false, monitors, immediate() );
         nativeLabelScanStore.init();
         nativeLabelScanStore.start();
 
@@ -106,7 +106,7 @@ public class NativeLabelScanStoreRebuildTest
         monitors.addMonitorListener( monitor );
 
         NativeLabelScanStore nativeLabelScanStore =
-                new NativeLabelScanStore( pageCache, storeDir, EMPTY, true, monitors, ignore() );
+                new NativeLabelScanStore( pageCache, fileSystemRule, storeDir, EMPTY, true, monitors, ignore() );
         nativeLabelScanStore.init();
         nativeLabelScanStore.start();
 
@@ -127,7 +127,7 @@ public class NativeLabelScanStoreRebuildTest
         monitors.addMonitorListener( monitor );
 
         NativeLabelScanStore nativeLabelScanStore =
-                new NativeLabelScanStore( pageCache, storeDir, EMPTY, true, monitors, ignore() );
+                new NativeLabelScanStore( pageCache, fileSystemRule, storeDir, EMPTY, true, monitors, ignore() );
         nativeLabelScanStore.init();
         nativeLabelScanStore.start();
 
@@ -147,7 +147,7 @@ public class NativeLabelScanStoreRebuildTest
         try
         {
             nativeLabelScanStore =
-                    new NativeLabelScanStore( pageCache, storeDir, changeStream, false, new Monitors(), immediate() );
+                    new NativeLabelScanStore( pageCache, fileSystemRule, storeDir, changeStream, false, new Monitors(), immediate() );
             nativeLabelScanStore.init();
 
             // when
@@ -174,7 +174,7 @@ public class NativeLabelScanStoreRebuildTest
         NativeLabelScanStore nativeLabelScanStore = null;
         try
         {
-            nativeLabelScanStore = new NativeLabelScanStore( pageCache, storeDir, THROWING_STREAM, false,
+            nativeLabelScanStore = new NativeLabelScanStore( pageCache, fileSystemRule, storeDir, THROWING_STREAM, false,
                     new Monitors(), immediate() );
 
             nativeLabelScanStore.init();

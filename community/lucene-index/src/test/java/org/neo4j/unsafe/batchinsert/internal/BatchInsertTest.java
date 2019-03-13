@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -1414,7 +1414,7 @@ public class BatchInsertTest
 
     private LabelScanStore getLabelScanStore()
     {
-        return new NativeLabelScanStore( pageCacheRule.getPageCache( fileSystemRule.get() ), storeDir.absolutePath(),
+        return new NativeLabelScanStore( pageCacheRule.getPageCache( fileSystemRule ), fileSystemRule, storeDir.absolutePath(),
                 FullStoreChangeStream.EMPTY, true, new Monitors(), RecoveryCleanupWorkCollector.immediate() );
     }
 

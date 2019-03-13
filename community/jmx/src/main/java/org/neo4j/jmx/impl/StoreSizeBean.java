@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2018 "Neo4j,"
+ * Copyright (c) 2002-2019 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -257,18 +257,18 @@ public final class StoreSizeBean extends ManagementBeanProvider
         {
             return delegate.getTotalStoreSize();
         }
+    }
 
-        private static File resolveStorePath( ManagementData management )
+    static File resolveStorePath( ManagementData management )
+    {
+        File storeDir = management.getKernelData().getStoreDir();
+        try
         {
-            File storeDir = management.getKernelData().getStoreDir();
-            try
-            {
-                return storeDir.getCanonicalFile().getAbsoluteFile();
-            }
-            catch ( IOException e )
-            {
-                return storeDir.getAbsoluteFile();
-            }
+            return storeDir.getCanonicalFile().getAbsoluteFile();
+        }
+        catch ( IOException e )
+        {
+            return storeDir.getAbsoluteFile();
         }
     }
 
