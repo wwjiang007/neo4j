@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -136,8 +136,7 @@ class MatchLongPatternAcceptanceTest extends ExecutionEngineFunSuite with QueryS
 
       // THEN
       val plan = result.executionPlanDescription()
-      val counts = countExpandsAndJoins(plan)
-      counts("expands") should equal(numberOfPatternRelationships)
+      assertMinExpandsAndJoins(plan, Map("expands" -> numberOfPatternRelationships, "joins" -> 0))
     }
   }
 

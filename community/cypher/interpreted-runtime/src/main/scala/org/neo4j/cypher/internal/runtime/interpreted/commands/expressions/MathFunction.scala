@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -49,7 +49,8 @@ abstract class NullSafeMathFunction(arg: Expression) extends MathFunction(arg) {
 trait NumericHelper {
 
   protected def asLongEntityId(a: AnyValue): Option[Long] = a match {
-    case a: IntegralValue => Some(a.longValue())
+    case i: IntegralValue => Some(i.longValue())
+    case f: FloatingPointValue => if (NumberValues.numbersEqual(f.doubleValue(), f.longValue())) Some(f.longValue()) else None
     case _ => None
   }
 

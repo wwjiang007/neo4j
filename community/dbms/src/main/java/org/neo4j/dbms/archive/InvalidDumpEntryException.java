@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -17,12 +17,14 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package org.neo4j.cypher.internal.compiler.v3_4.helpers
+package org.neo4j.dbms.archive;
 
-object LazyIterable {
-  def apply[T](f: => Iterator[T]) = new LazyIterable[T] {
-    override def iterator = f
-  }
+import java.io.IOException;
+
+public class InvalidDumpEntryException extends IOException
+{
+    public InvalidDumpEntryException( String entryName )
+    {
+        super( "Dump file entry `" + entryName + "` points to a location outside of the destination database." );
+    }
 }
-
-sealed abstract class LazyIterable[T] extends Iterable[T]

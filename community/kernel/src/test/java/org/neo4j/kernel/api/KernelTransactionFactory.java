@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -83,7 +83,7 @@ public class KernelTransactionFactory
     {
     }
 
-    static Instances kernelTransactionWithInternals( LoginContext loginContext )
+    private static Instances kernelTransactionWithInternals( LoginContext loginContext )
     {
         TransactionHeaderInformation headerInformation = new TransactionHeaderInformation( -1, -1, new byte[0] );
         TransactionHeaderInformationFactory headerInformationFactory = mock( TransactionHeaderInformationFactory.class );
@@ -103,7 +103,7 @@ public class KernelTransactionFactory
                 mock( TransactionRepresentationCommitProcess.class ), mock( TransactionMonitor.class ),
                 mock( Supplier.class ),
                 mock( Pool.class ),
-                Clocks.systemClock(), new AtomicReference<>( CpuClock.NOT_AVAILABLE ), new AtomicReference<>( HeapAllocation.NOT_AVAILABLE ), NULL,
+                Clocks.nanoClock(), new AtomicReference<>( CpuClock.NOT_AVAILABLE ), new AtomicReference<>( HeapAllocation.NOT_AVAILABLE ), NULL,
                 LockTracer.NONE,
                 PageCursorTracerSupplier.NULL,
                 storageEngine, new CanWrite(), new DefaultCursors(), AutoIndexing.UNSUPPORTED,

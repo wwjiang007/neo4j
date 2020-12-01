@@ -5,7 +5,7 @@
 
   <groupId>org.neo4j</groupId>
   <artifactId>parent</artifactId>
-  <version>3.4.13-SNAPSHOT</version>
+  <version>3.4.19-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Neo4j</name>
   <description>Neo4j Graph Database</description>
@@ -66,7 +66,7 @@
     <maven.compiler.target>1.8</maven.compiler.target>
     <licensing.prepend.text>licensing/notice-agpl-prefix.txt</licensing.prepend.text>
     <lucene.version>5.5.5</lucene.version>
-    <bouncycastle.version>1.60</bouncycastle.version>
+    <bouncycastle.version>1.64</bouncycastle.version>
     <generate-config-docs-phase>prepare-package</generate-config-docs-phase>
     <java.exports/>
     <test.runner.jvm/>
@@ -79,7 +79,7 @@
       -Dorg.org.neo4j.kernel.impl.newapi.DefaultCursors.trackCursors=true
       -XX:+UnlockExperimentalVMOptions -XX:+TrustFinalNonStaticFields ${java.exports} ${test.runner.jvm.settings.additional}
     </test.runner.jvm.settings>
-    <jetty.version>9.4.11.v20180605</jetty.version>
+    <jetty.version>9.4.17.v20190418</jetty.version>
     <findbugs.version>3.0.1</findbugs.version>
     <git.commit>unknown-commit</git.commit>
     <forkCounts>0</forkCounts>
@@ -95,11 +95,12 @@
     <scala.target.vm>1.8</scala.target.vm>
     <scala.java.additional.args/>
     <jersey.version>1.19.3</jersey.version>
-    <currentYear>2019</currentYear>
+    <currentYear>2020</currentYear>
     <cypher.compatibility.23>2.3.12</cypher.compatibility.23>
     <cypher.compatibility.31>3.1.9</cypher.compatibility.31>
     <cypher.compatibility.33>3.3.9</cypher.compatibility.33>
     <caffeine.version>2.6.2</caffeine.version>
+	  <amazon-sdk.version>1.11.524</amazon-sdk.version>
   </properties>
 
   <modules>
@@ -966,7 +967,7 @@
       <dependency>
         <groupId>org.apache.shiro</groupId>
         <artifactId>shiro-core</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.2</version>
       </dependency>
       <dependency>
         <groupId>com.github.ben-manes.caffeine</groupId>
@@ -1003,7 +1004,6 @@
         <version>24.1-jre</version>
         <scope>test</scope>
       </dependency>
-
       <dependency>
         <groupId>org.apache.httpcomponents</groupId>
         <artifactId>httpclient</artifactId>
@@ -1156,33 +1156,11 @@
         <groupId>commons-configuration</groupId>
         <artifactId>commons-configuration</artifactId>
         <version>1.10</version>
-        <type>jar</type>
-        <scope>compile</scope>
-        <exclusions>
-          <exclusion>
-            <artifactId>commons-digester</artifactId>
-            <groupId>commons-digester</groupId>
-          </exclusion>
-        </exclusions>
-      </dependency>
-      <!-- Added (directly) to avoid version clash in commons-configuration. -->
-      <dependency>
-        <groupId>org.apache.commons</groupId>
-        <artifactId>commons-digester3</artifactId>
-        <version>3.2</version>
-        <type>jar</type>
-        <scope>compile</scope>
-        <exclusions>
-          <exclusion>
-            <groupId>commons-beanutils</groupId>
-            <artifactId>commons-beanutils</artifactId>
-          </exclusion>
-        </exclusions>
       </dependency>
       <dependency>
         <groupId>commons-beanutils</groupId>
         <artifactId>commons-beanutils</artifactId>
-        <version>1.9.3</version>
+        <version>1.9.4</version>
         <scope>compile</scope>
       </dependency>
       <dependency>
@@ -1198,7 +1176,7 @@
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-compress</artifactId>
-        <version>1.18</version>
+        <version>1.19</version>
       </dependency>
 
       <!-- Netty is used by three components: Com, Cluster and Bolt Socket Transport.
@@ -1350,6 +1328,28 @@
         <artifactId>compile-testing</artifactId>
         <version>0.15</version>
         <scope>test</scope>
+      </dependency>
+
+      <!-- used by benchmark-infra module -->
+      <dependency>
+      	<groupId>com.amazonaws</groupId>
+      	<artifactId>aws-java-sdk-batch</artifactId>
+      	<version>${amazon-sdk.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.amazonaws</groupId>
+        <artifactId>aws-java-sdk-cloudformation</artifactId>
+        <version>${amazon-sdk.version}</version>
+      </dependency>
+      <dependency>
+      	<groupId>com.amazonaws</groupId>
+      	<artifactId>aws-java-sdk-s3</artifactId>
+      	<version>${amazon-sdk.version}</version>
+      </dependency>
+      <dependency>
+      	<groupId>com.amazonaws</groupId>
+      	<artifactId>aws-java-sdk-secretsmanager</artifactId>
+      	<version>${amazon-sdk.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

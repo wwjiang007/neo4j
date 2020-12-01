@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -69,7 +69,7 @@ case class joinSolverStep(qg: QueryGraph) extends IDPSolverStep[PatternRelations
         val overlappingNodes = computeOverlappingNodes(lhs, rhs, solveds, argumentsToRemove)
         if (overlappingNodes.nonEmpty) {
           val overlappingSymbols = computeOverlappingSymbols(lhs, rhs, argumentsToRemove)
-          if (overlappingSymbols == overlappingNodes) {
+          if (overlappingNodes.forall(overlappingSymbols.contains)) {
             if (VERBOSE) {
               println(s"${show(leftGoal, nodes(lhs, solveds))} overlap ${show(rightGoal, nodes(rhs, solveds))} on ${showNames(overlappingNodes)}")
             }

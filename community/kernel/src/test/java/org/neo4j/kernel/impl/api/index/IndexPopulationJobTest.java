@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -346,8 +346,7 @@ public class IndexPopulationJobTest
         // Then
         LogMatcherBuilder match = inLog( IndexPopulationJob.class );
         logProvider.assertExactly(
-                match.info( "Index population started: [%s]", ":FIRST(name)" ),
-                match.info( "Index creation finished. Index [%s] is %s.", ":FIRST(name)", "ONLINE" )
+                match.info( "Index population started: [%s]", ":FIRST(name)" )
         );
     }
 
@@ -368,8 +367,7 @@ public class IndexPopulationJobTest
         // Then
         LogMatcherBuilder match = inLog( IndexPopulationJob.class );
         logProvider.assertExactly(
-                match.info( "Index population started: [%s]", ":FIRST(name)" ),
-                match.info( "Index created. Starting data checks. Index [%s] is %s.", ":FIRST(name)", "POPULATING" )
+                match.info( "Index population started: [%s]", ":FIRST(name)" )
         );
     }
 

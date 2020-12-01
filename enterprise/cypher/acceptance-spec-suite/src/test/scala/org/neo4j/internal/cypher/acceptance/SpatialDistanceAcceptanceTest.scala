@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -194,6 +194,42 @@ class SpatialDistanceAcceptanceTest extends ExecutionEngineFunSuite with CypherC
     result.toList should equal(List(Map("dist" -> null)))
   }
 
+  test("distance function should work for points with different aliases") {
+    val result = executeWith(pointConfig - Configs.OldAndRule,
+      """
+        |WITH point({latitude: 12, longitude: 55.1, srid: 4326}) as p1
+        |RETURN distance(point({x:55, y:12, srid: 4326}), p1) as dist
+      """.stripMargin)
+    Math.round(result.columnAs("dist").next().asInstanceOf[Double]) should equal(10889)
+  }
+
+  test("distance function should work for points with and without explicit srid") {
+    val result = executeWith(pointConfig - Configs.OldAndRule,
+      """
+        |WITH point({latitude: 12, longitude: 55.1, srid: 4326}) as p1
+        |RETURN distance(point({latitude: 12, longitude: 55}), p1) as dist
+      """.stripMargin)
+    Math.round(result.columnAs("dist").next().asInstanceOf[Double]) should equal(10889)
+  }
+
+  test("distance function should work for points with and without explicit crs") {
+    val result = executeWith(pointConfig,
+      """
+        |WITH point({x: 0, y: 0}) as p1
+        |RETURN distance(point({x: 3, y: 4, crs:'cartesian'}), p1) as dist
+      """.stripMargin)
+    Math.round(result.columnAs("dist").next().asInstanceOf[Double]) should equal(5)
+  }
+
+  test("distance function should work for points in same coordinate system") {
+    val result = executeWith(pointConfig - Configs.OldAndRule,
+      """
+        |WITH point({latitude: 12, longitude: 55.1, srid: 4326}) as p1
+        |RETURN distance(point({latitude: 12, longitude: 55, crs: 'WGS-84'}), p1) as dist
+      """.stripMargin)
+    Math.round(result.columnAs("dist").next().asInstanceOf[Double]) should equal(10889)
+  }
+
   test("points with distance query and mixed crs") {
     // Given
     graph.execute("CREATE (p:Place) SET p.location = point({y: 56.7, x: 12.78, crs: 'cartesian'})")
@@ -327,25 +363,29 @@ class SpatialDistanceAcceptanceTest extends ExecutionEngineFunSuite with CypherC
     Range(0, 50).foreach(i => graph.execute(s"CREATE (p:Place) SET p.location = point({latitude: $i, longitude: $i})"))
 
     // Have a slightly bigger circle, and expect points on both sides of the date line, except the "corners" of the square.
-    val query =
-      s"""WITH distance(point({latitude: 0, longitude: 180, crs: 'WGS-84'}), point({latitude: 0, longitude: 169, crs: 'WGS-84'})) as d
-         |MATCH (p:Place)
-         |WHERE distance(p.location, point({latitude: 0, longitude: 180, crs: 'WGS-84'})) <= d
-         |RETURN p.location as point
+    Seq("<=","<").foreach { inequality =>
+      withClue(s"When using distance $inequality d\n") {
+        val query =
+          s"""WITH distance(point({latitude: 0, longitude: 180, crs: 'WGS-84'}), point({latitude: 0, longitude: 169, crs: 'WGS-84'})) as d
+             |MATCH (p:Place)
+             |WHERE distance(p.location, point({latitude: 0, longitude: 180, crs: 'WGS-84'})) $inequality d
+             |RETURN p.location as point
         """.stripMargin
 
-    // Then
-    val expected = Set(
-      Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, -180, 0)),
-      Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, 180, 0)),
-      Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, -170, 0)),
-      Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, 170, 0)),
-      Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, -180, 10)),
-      Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, 180, 10)),
-      Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, -180, -10)),
-      Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, 180, -10))
-    )
-    expectResultsAndIndexUsage(query, expected, inclusiveRange = true)
+        // Then
+        val expected = Set(
+          Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, -180, 0)),
+          Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, 180, 0)),
+          Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, -170, 0)),
+          Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, 170, 0)),
+          Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, -180, 10)),
+          Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, 180, 10)),
+          Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, -180, -10)),
+          Map("point" -> Values.pointValue(CoordinateReferenceSystem.WGS84, 180, -10))
+        )
+        expectResultsAndIndexUsage(query, expected, inclusiveRange = inequality.contains("="))
+      }
+    }
   }
 
   test("indexed 3D points with distance query and points within bbox") {
@@ -569,6 +609,35 @@ class SpatialDistanceAcceptanceTest extends ExecutionEngineFunSuite with CypherC
     }
   }
 
+  test("should use unique index for cartesian distance query") {
+    // Given
+    graph.createConstraint("Place", "location")
+
+    // Create 1000 unique nodes
+    for (i <- 0 to 999) {
+      val y = 34 + i * 0.001
+      createLabeledNode(Map("location" -> Values.pointValue(CoordinateReferenceSystem.Cartesian, 105, y)), "Place")
+    }
+
+    // When
+    val query =
+      """
+        |MATCH (p:Place)
+        |WHERE distance(p.location, point({crs: 'cartesian', x: 105, y: 34 })) < 0.1
+        |RETURN count(p)
+      """.stripMargin
+
+    // Then
+    val result = executeWith(distanceConfig, query,
+      planComparisonStrategy = ComparePlansWithAssertion({ plan =>
+        plan should useOperatorWithText("Filter", "distance")
+        plan should useOperatorWithText("NodeUniqueIndexSeekByRange", ":Place(location)", "distance", "< ")
+      }, expectPlansToFail = Configs.Version3_3)
+    )
+
+    result.toList should equal(List(Map("count(p)" -> 100)))
+  }
+
   ignore("projecting distance into variable still uses index") {
     // Given
     graph.createIndex("Place", "location")
@@ -733,14 +802,14 @@ class SpatialDistanceAcceptanceTest extends ExecutionEngineFunSuite with CypherC
     }
   }
 
-  private def expectResultsAndIndexUsage(query: String, expectedResults: Set[_ <: Any], inclusiveRange: Boolean) = {
+  private def expectResultsAndIndexUsage(query: String, expectedResults: Set[_ <: Any], inclusiveRange: Boolean): Unit = {
     val result = executeWith(distanceConfig, query)
 
     // Then
     val plan = result.executionPlanDescription()
     plan should useOperatorWithText("Projection", "point")
     plan should useOperatorWithText("Filter", "distance")
-    plan should useOperatorWithText("NodeIndexSeekByRange", ":Place(location)", "distance", if (inclusiveRange) "<= " else "<")
+    plan should useOperatorWithText("NodeIndexSeekByRange", ":Place(location)", "distance", if (inclusiveRange) "<= " else "< ")
     result.toList.toSet should equal(expectedResults)
   }
 }

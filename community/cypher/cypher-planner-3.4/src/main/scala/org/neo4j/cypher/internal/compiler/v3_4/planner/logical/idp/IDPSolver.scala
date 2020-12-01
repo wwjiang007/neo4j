@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -19,9 +19,9 @@
  */
 package org.neo4j.cypher.internal.compiler.v3_4.planner.logical.idp
 
-import org.neo4j.cypher.internal.compiler.v3_4.helpers.LazyIterable
 import org.neo4j.cypher.internal.compiler.v3_4.planner.logical.{ProjectingSelector, Selector}
 import org.neo4j.cypher.internal.planner.v3_4.spi.PlanningAttributes.Solveds
+import org.neo4j.graphdb.factory.GraphDatabaseSettings
 
 import scala.collection.immutable.BitSet
 
@@ -67,7 +67,7 @@ class IDPSolver[Solvable, Result, Context](generator: IDPSolverStep[Solvable, Re
         while (keepGoing && goals.hasNext) {
           val goal = goals.next()
           if (!table.contains(goal)) {
-            val candidates = LazyIterable(generator(registry, goal, table, context, solveds))
+            val candidates = generator(registry, goal, table, context, solveds).toVector
             projectingSelector(candidates).foreach { candidate =>
               foundNoCandidate = false
               table.put(goal, candidate)
@@ -82,7 +82,7 @@ class IDPSolver[Solvable, Result, Context](generator: IDPSolverStep[Solvable, Re
     }
 
     def findBestCandidateInBlock(blockSize: Int): (Goal, Result) = {
-      val blockCandidates: Iterable[(Goal, Result)] = LazyIterable(table.plansOfSize(blockSize)).toIndexedSeq
+      val blockCandidates: Iterable[(Goal, Result)] = table.plansOfSize(blockSize).toVector
       val bestInBlock = goalSelector(blockCandidates)
       bestInBlock.getOrElse {
         throw new IllegalStateException(
@@ -106,6 +106,11 @@ class IDPSolver[Solvable, Result, Context](generator: IDPSolverStep[Solvable, Re
       iterations += 1
       monitor.startIteration(iterations)
       val largestBlockSize = generateBestCandidates(toDo.size)
+      if (largestBlockSize <= 0) throw new IllegalStateException(
+        s"""Unfortunately, the planner was unable to find a plan within the constraints provided.
+          |Try increasing the config values `${GraphDatabaseSettings.cypher_idp_solver_table_threshold.name()}`
+          |and `${GraphDatabaseSettings.cypher_idp_solver_duration_threshold.name()}` to allow
+          |for a larger sub-plan table and longer planning time.""".stripMargin)
       val (bestGoal, bestInBlock) = findBestCandidateInBlock(largestBlockSize)
       monitor.endIteration(iterations, largestBlockSize, table.size)
       compactBlock(bestGoal, bestInBlock)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -90,6 +90,25 @@ class HintAcceptanceTest
       planComparisonStrategy = ComparePlansWithAssertion((p) => {
         p should useOperators("NodeRightOuterHashJoin")
       }, expectPlansToFail = Configs.AllRulePlanners + Configs.Cost2_3 + Configs.Cost3_1 + cost3_3))
+  }
+
+  test("should solve join hints when leaves have extra variables") {
+
+    val rel = relate(createNode(), createNode())
+
+    val query =
+      s"""
+         |    WITH 1 as nbr
+         |    MATCH (n)-[r]->(p)
+         |    USING JOIN ON p
+         |    RETURN r
+      """.stripMargin
+
+    val result = executeWith(Configs.Interpreted - Configs.Cost3_3 - Configs.Cost3_1 - Configs.Cost2_3, query,
+      planComparisonStrategy = ComparePlansWithAssertion(_  should useOperators("NodeHashJoin"),
+        expectPlansToFail = Configs.AllRulePlanners))
+
+    result.toList should be(List(Map("r" -> rel)))
   }
 
   test("should do index seek instead of index scan with explicit index seek hint") {

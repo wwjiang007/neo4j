@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -57,5 +57,50 @@ class IdAcceptanceTest extends ExecutionEngineFunSuite with CypherComparisonSupp
     executeWith(Configs.Interpreted, "RETURN upper('abc') AS a").columnAs[String]("a").next should equal("ABC")
     executeWith(Configs.Interpreted, "RETURN lower('ABC') AS a").columnAs[String]("a").next should equal("abc")
     executeWith(Configs.Interpreted, "MATCH p = ()-->() RETURN rels(p) AS r").columnAs[List[Relationship]]("r").next should equal(List(r))
+  }
+
+  test("node id seek should work with floats") {
+    // given
+    val idResult = innerExecuteDeprecated("CREATE (n) RETURN id(n) AS id, n").toList.head
+    val id = idResult("id")
+    val n = idResult("n")
+
+    // when
+    val result = innerExecuteDeprecated(s"MATCH (n) WHERE id(n)=${id}.0 RETURN n")
+
+    // then
+    result.toList should equal(
+      List(Map("n" -> n))
+    )
+  }
+
+  test("directed rel id seek should work with floats") {
+    // given
+    val idResult = innerExecuteDeprecated("CREATE ()-[r:R]->() RETURN id(r) AS id, r").toList.head
+    val id = idResult("id")
+    val r = idResult("r")
+
+    // when
+    val result = innerExecuteDeprecated(s"MATCH ()-[r:R]->() WHERE id(r)=${id}.0 RETURN r")
+
+    // then
+    result.toList should equal(
+      List(Map("r" -> r))
+    )
+  }
+  test("undirected rel id seek should work with floats") {
+    // given
+    val idResult = innerExecuteDeprecated("CREATE ()-[r:R]->() RETURN id(r) AS id, r").toList.head
+    val id = idResult("id")
+    val r = idResult("r")
+
+    // when
+    val result = innerExecuteDeprecated(s"MATCH ()-[r:R]-() WHERE id(r)=${id}.0 RETURN r")
+
+    // then
+    result.toList should equal(
+      List(Map("r" -> r),
+        Map("r" -> r))
+    )
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -677,6 +677,19 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
     assertRows(2)(result)("VarLengthExpand(Pruning)")
     assertDbHits(7)(result)("VarLengthExpand(Pruning)")
 
+  }
+
+  test("profiling with compiled runtime") {
+    //given
+    createLabeledNode("L")
+    createLabeledNode("L")
+    createLabeledNode("L")
+
+    //when
+    val result = innerExecuteDeprecated("PROFILE CYPHER runtime=compiled MATCH (n:L) RETURN count(n.prop)", Map.empty)
+
+    //then
+    assertRows(1)(result)("EagerAggregation")
   }
 
   private def assertRows(expectedRows: Int)(result: InternalExecutionResult)(names: String*) {

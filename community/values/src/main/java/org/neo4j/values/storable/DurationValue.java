@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j.
@@ -59,7 +59,7 @@ import static java.util.Objects.requireNonNull;
 import static java.util.regex.Pattern.CASE_INSENSITIVE;
 import static org.neo4j.values.storable.NumberType.NO_NUMBER;
 import static org.neo4j.values.storable.NumberValue.safeCastFloatingPoint;
-import static org.neo4j.values.utils.TemporalUtil.AVG_DAYS_PER_MONTH;
+import static org.neo4j.values.utils.TemporalUtil.AVG_NANOS_PER_MONTH;
 import static org.neo4j.values.utils.TemporalUtil.AVG_SECONDS_PER_MONTH;
 import static org.neo4j.values.utils.TemporalUtil.NANOS_PER_SECOND;
 import static org.neo4j.values.utils.TemporalUtil.SECONDS_PER_DAY;
@@ -911,16 +911,37 @@ public final class DurationValue extends ScalarValue implements TemporalAmount, 
         return approximate( months / divisor, days / divisor, seconds / divisor, nanos / divisor );
     }
 
-    private static DurationValue approximate( double months, double days, double seconds, double nanos )
+    static DurationValue approximate( double months, double days, double seconds, double nanos )
     {
-        long m = (long) months;
-        days += AVG_DAYS_PER_MONTH * (months - m);
-        long d = (long) days;
-        seconds += SECONDS_PER_DAY * (days - d);
-        long s = (long) seconds;
-        nanos += NANOS_PER_SECOND * (seconds - s);
-        long n = (long) nanos;
-        return duration( m, d, s, n );
+
+        long monthsAsLong = safeDoubleToLong(months);
+
+        double monthDiffInNanos = AVG_NANOS_PER_MONTH * months - AVG_NANOS_PER_MONTH * monthsAsLong;
+        days += monthDiffInNanos / (NANOS_PER_SECOND * SECONDS_PER_DAY);
+        long daysAsLong = safeDoubleToLong(days);
+
+        double daysDiffInNanos = NANOS_PER_SECOND * SECONDS_PER_DAY * days - NANOS_PER_SECOND * SECONDS_PER_DAY * daysAsLong;
+        seconds += daysDiffInNanos / NANOS_PER_SECOND;
+        long secondsAsLong = safeDoubleToLong(seconds);
+
+        double secondsDiffInNanos = NANOS_PER_SECOND * seconds - NANOS_PER_SECOND * secondsAsLong;
+        nanos += secondsDiffInNanos;
+        long nanosAsLong = safeDoubleToLong(nanos);
+
+        return duration( monthsAsLong, daysAsLong, secondsAsLong, nanosAsLong );
+    }
+
+    /**
+     * Will cast a double to a long, but only if it is inside the limits of [Long.MIN_VALUE, LONG.MAX_VALUE]
+     * We need this to detect overflow errors, whereas normal truncation is OK while approximating.
+     */
+    private static long safeDoubleToLong( double d )
+    {
+        if ( d > Long.MAX_VALUE || d < Long.MIN_VALUE )
+        {
+            throw new ArithmeticException( "long overflow" );
+        }
+        return (long) d;
     }
 
     private static Temporal assertValidPlus( Temporal temporal, long amountToAdd, TemporalUnit unit )

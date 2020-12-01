@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -36,6 +36,7 @@ import scala.collection.mutable
 
 object SlottedExecutionContext {
   def empty = new SlottedExecutionContext(SlotConfiguration.empty)
+  val DEBUG = false
 }
 
 /**
@@ -102,7 +103,7 @@ case class SlottedExecutionContext(slots: SlotConfiguration) extends ExecutionCo
 
   override def getRefAt(offset: Int): AnyValue = {
     val value = refs(offset)
-    if (value == null)
+    if (SlottedExecutionContext.DEBUG && value == null)
       throw new InternalException(s"Reference value not initialised at offset $offset in $this")
     value
   }

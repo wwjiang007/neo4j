@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2019 "Neo4j,"
+ * Copyright (c) 2002-2020 "Neo4j,"
  * Neo4j Sweden AB [http://neo4j.com]
  *
  * This file is part of Neo4j Enterprise Edition. The included source
@@ -26,6 +26,7 @@ import java.io.{File, PrintWriter}
 import java.net.{URL, URLConnection, URLStreamHandler, URLStreamHandlerFactory}
 import java.nio.file.Files
 import java.util.Collections.emptyMap
+import java.util.concurrent.TimeUnit
 
 import org.neo4j.cypher._
 import org.neo4j.cypher.internal.frontend.v3_4.helpers.StringHelper.RichString
@@ -88,6 +89,49 @@ class LoadCsvAcceptanceTest
       assertStats(result, propertiesWritten = 6)
       result.executionPlanDescription() should includeAtLeastOne(classOf[NodeIndexSeek], withVariable = "user")
     }
+  }
+
+  test("should be able to use multiple index hints with load csv") {
+    val startNodes = (0 to 9 map (i => createLabeledNode(Map("loginId" -> i.toString), "Login"))).toArray
+    val endNodes = (0 to 9 map (i => createLabeledNode(Map("platformId" -> i.toString), "Permission"))).toArray
+
+    for( a <- 0 to 9 ) {
+      for( b <- 0 to 9) {
+        relate( startNodes(a), endNodes(b), "prop" -> (10 * a + b))
+      }
+    }
+
+    val urls = csvUrls({
+      writer =>
+        writer.println("USER_ID,PLATFORM")
+        writer.println("1,5")
+        writer.println("2,4")
+        writer.println("3,4")
+    })
+
+    innerExecuteDeprecated("CREATE INDEX ON :Permission(platformId)")
+    innerExecuteDeprecated("CREATE INDEX ON :Login(loginId)")
+
+    graph.inTx {
+      graph.schema().awaitIndexesOnline(10, TimeUnit.MINUTES)
+    }
+
+    val query =
+      s"""
+         |    LOAD CSV WITH HEADERS FROM '${urls.head}' AS line
+         |    WITH line
+         |    MATCH (l:Login {loginId: line.USER_ID}), (p:Permission {platformId: line.PLATFORM})
+         |    USING INDEX l:Login(loginId)
+         |    USING INDEX p:Permission(platformId)
+         |    MATCH (l)-[r: REL]->(p)
+         |    RETURN r.prop
+      """.stripMargin
+
+    val result = executeWith(Configs.Interpreted - Configs.Cost3_3 - Configs.Cost3_1 - Configs.Version2_3, query,
+      planComparisonStrategy = ComparePlansWithAssertion(_  should useOperatorTimes("NodeIndexSeek", 2),
+        expectPlansToFail = Configs.AllRulePlanners))
+
+    result.toSet should be(Set(Map("r.prop" -> 15), Map("r.prop" -> 24), Map("r.prop" -> 34)))
   }
 
   test("import should not be eager") {
